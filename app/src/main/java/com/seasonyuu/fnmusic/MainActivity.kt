@@ -61,7 +61,8 @@ class MainActivity : ComponentActivity() {
             ) {
             FnMusicTheme(darkTheme = dark, accent = androidx.compose.ui.graphics.Color(music.themeColor.argb)) {
                 val player by viewModel.player.collectAsState()
-                if (session is SessionState.Ready) {
+                val readySession = session as? SessionState.Ready
+                if (readySession != null) {
                     MusicShell(
                         state = music,
                         playerState = player,
@@ -114,6 +115,7 @@ class MainActivity : ComponentActivity() {
                         onChangePassword = viewModel::changePassword,
                         onRefreshProfile = viewModel::refreshProfile,
                         administration = viewModel.administration,
+                        folderAuthorizationTarget = viewModel.folderAuthorizationTarget(),
                         onStreamingQualityChange = viewModel::setStreamingQuality,
                         onAppearanceChange = viewModel::setAppearance,
                         onThemeColorChange = viewModel::setThemeColor,
@@ -121,6 +123,8 @@ class MainActivity : ComponentActivity() {
                         onClearCache = viewModel::clearCache,
                         lyricsActions = viewModel.lyricsActions,
                         aboutActions = aboutViewModel,
+                        serverVersion = readySession.serverVersion,
+                        mediasrvVersion = readySession.mediasrvVersion,
                         openPlayerRequested = openPlayerRequested,
                         onPlayerOpenRequestConsumed = { openPlayerRequested = false },
                     )

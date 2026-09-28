@@ -73,6 +73,22 @@ class LibraryAdministrationStateTest {
         state.directoryUp(); assertEquals("/vol1/1000/Music", state.directory)
         state.directoryUp(); assertNull(state.directory)
     }
+    @Test fun authorizationReturnChecksFreshServerRootsAndKeepsDraft() {
+        state.draft = LibraryDraft(path = "/vol1/1000/Original")
+        state.pickerOpen = true
+        state.browse(null)
+        state.authorizationSucceeded(listOf("/vol1/1000/New"))
+        assertEquals("/vol1/1000/Original", state.draft!!.path)
+        assertTrue(state.pickerOpen)
+        assertEquals(listOf("/vol1/1000/New"), state.authorizationPendingPaths)
+        assertTrue(state.message!!.contains("暂未发现"))
+        api.rootValues = api.rootValues + AuthorizedMusicDirectory("/vol1/1000/New", 1)
+        state.recheckAuthorizedDirectories()
+        assertTrue(state.authorizationPendingPaths.isEmpty())
+        assertTrue(state.message!!.contains("已更新"))
+        assertEquals("/vol1/1000/Original", state.draft!!.path)
+        assertEquals(0, api.saves)
+    }
     @Test fun scanSubmissionWaitsForNewTaskAndCompletionInvalidatesCatalog() = runBlocking {
         state.refresh(); state.scan("a")
         assertTrue("a" in state.pendingScans); assertEquals(0, changes)

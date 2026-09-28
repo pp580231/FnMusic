@@ -37,8 +37,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -48,7 +46,13 @@ import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-internal fun LibraryAdministrationScreen(api: MusicAdministration, onBack: () -> Unit, onCatalogChanged: () -> Unit = {}) {
+internal fun LibraryAdministrationScreen(api: MusicAdministration, onBack: () -> Unit,
+    authorizationTarget: FolderAuthorizationTarget? = null,
+    onAuthorize: (FolderAuthorizationRequest) -> Unit = {},
+    authorizationResult: FolderAuthorizationResult? = null,
+    onAuthorizationResultConsumed: () -> Unit = {},
+    isActive: Boolean = true,
+    onCatalogChanged: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val changed by rememberUpdatedState(onCatalogChanged)
     val state = rememberSaveable(api, saver = listSaver(
@@ -61,6 +65,18 @@ internal fun LibraryAdministrationScreen(api: MusicAdministration, onBack: () ->
     var rebuild by remember { mutableStateOf(false) }
     var discard by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(authorizationResult) {
+        authorizationResult?.let { result ->
+            when (result) {
+                is FolderAuthorizationResult.Success -> state.authorizationSucceeded(result.paths)
+                FolderAuthorizationResult.Cancel -> state.message = "已取消文件夹授权"
+                FolderAuthorizationResult.Error -> state.message = "文件夹授权失败，请重试"
+                FolderAuthorizationResult.Invalid -> state.message = "授权返回信息无效，请重新检查"
+                FolderAuthorizationResult.Closed -> state.message = "已关闭文件夹授权"
+            }
+            onAuthorizationResultConsumed()
+        }
+    }
     LaunchedEffect(state, owner) {
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             state.refresh()
@@ -69,10 +85,18 @@ internal fun LibraryAdministrationScreen(api: MusicAdministration, onBack: () ->
     }
     LaunchedEffect(state.message) { state.message?.let { snackbar.showSnackbar(it); state.message = null } }
     val closeEditor = { if (!state.saving) { if (state.draft?.dirty == true) discard = true else state.closeEditor() } }
-    BackHandler(state.pickerOpen) { if (state.directory != null) state.directoryUp() else state.pickerOpen = false }
-    BackHandler(!state.pickerOpen && (state.draft != null || state.editingGuid != null)) { closeEditor() }
+    BackHandler(isActive && state.pickerOpen) { if (state.directory != null) state.directoryUp() else state.pickerOpen = false }
+    val authorize: (() -> Unit)? = authorizationTarget?.let { target ->
+        {
+            runCatching { FolderAuthorizationRequest.create(target, state.roots.orEmpty().map { it.path }) }
+                .onSuccess(onAuthorize).onFailure { state.message = "无法打开文件夹授权，请检查连接" }
+            Unit
+        }
+    }
+    BackHandler(isActive && !state.pickerOpen && (state.draft != null || state.editingGuid != null)) { closeEditor() }
+    val widePicker = LocalConfiguration.current.screenWidthDp >= 840
     val route = when {
-        state.pickerOpen && LocalConfiguration.current.screenWidthDp < 840 -> 2
+        state.pickerOpen -> 2
         state.draft != null || state.editingGuid != null -> 1
         else -> 0
     }
@@ -84,7 +108,7 @@ internal fun LibraryAdministrationScreen(api: MusicAdministration, onBack: () ->
                 .using(SizeTransform(clip = false))
         }, label = "library-page") { page ->
         when (page) {
-            2 -> DirectoryPicker(state)
+            2 -> DirectoryPicker(state, authorize, wide = widePicker)
             1 -> LibraryEditor(state, closeEditor)
             else -> LibraryPage("音乐库管理", onBack, actions = {
                 AppBarButton(onClick = state::create, enabled = state.folders != null && state.folders.orEmpty().size < 200) { Icon(Icons.Rounded.Add, "添加文件夹") }
@@ -177,9 +201,6 @@ internal fun LibraryAdministrationScreen(api: MusicAdministration, onBack: () ->
             bottom = maxOf(LocalBottomOverlayPadding.current, WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()) + 12.dp,
         ).imePadding())
     }
-    if (state.pickerOpen && LocalConfiguration.current.screenWidthDp >= 840) Dialog(onDismissRequest = { state.pickerOpen = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.widthIn(max = 1000.dp).fillMaxWidth(.9f).fillMaxHeight(.85f), shape = MaterialTheme.shapes.extraLarge) { DirectoryPicker(state, wide = true) }
-    }
     if (showTasks) ModalBottomSheet(onDismissRequest = { showTasks = false }) {
         Text("扫描任务", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(20.dp))
         LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -215,9 +236,10 @@ internal fun LibraryAdministrationScreen(api: MusicAdministration, onBack: () ->
 }
 
 @Composable
-private fun LibraryPage(title: String, onBack: () -> Unit, actions: @Composable RowScope.() -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
+private fun LibraryPage(title: String, onBack: () -> Unit, actions: @Composable RowScope.() -> Unit = {},
+    drawBackgroundBlur: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
-        Box(Modifier.padding(horizontal = 20.dp)) { PageTitle(title, onBack, actions = actions) }
+        Box(Modifier.padding(horizontal = 20.dp)) { PageTitle(title, onBack, actions = actions, drawBackgroundBlur = drawBackgroundBlur) }
         content()
     }
 }
@@ -281,7 +303,7 @@ private data class DirectoryFrame(
 )
 
 @Composable
-private fun DirectoryPicker(state: LibraryAdministrationState, wide: Boolean = false) {
+private fun DirectoryPicker(state: LibraryAdministrationState, onAuthorize: (() -> Unit)?, wide: Boolean = false) {
     val scrollPositions = state.directoryScrollPositions
     val frame = DirectoryFrame(state.directory, state.roots, state.children, state.directoryLoading, state.directoryError, state.canSelectDirectory)
     AnimatedContent(frame, contentKey = { it.path }, modifier = Modifier.fillMaxSize(), transitionSpec = {
@@ -294,7 +316,7 @@ private fun DirectoryPicker(state: LibraryAdministrationState, wide: Boolean = f
         val position = scrollPositions[pathKey] ?: (0 to 0)
         val listState = rememberLazyListState(position.first, position.second)
         DisposableEffect(pathKey) { onDispose { scrollPositions[pathKey] = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset } }
-        LibraryPage("选择音乐文件夹", { state.pickerOpen = false }) {
+        LibraryPage("选择音乐文件夹", { state.pickerOpen = false }, drawBackgroundBlur = !wide) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(colors = readableTextButtonColors(), onClick = { state.browse(null) }) { Text("授权位置") }
                 val parts = directory.path?.trim('/')?.split('/').orEmpty()
@@ -304,6 +326,12 @@ private fun DirectoryPicker(state: LibraryAdministrationState, wide: Boolean = f
                     val authorized = directory.roots.orEmpty().any { normalizedLibraryPath(target) == normalizedLibraryPath(it.path) || normalizedLibraryPath(target).startsWith(normalizedLibraryPath(it.path) + "/") }
                     TextButton(colors = readableTextButtonColors(), onClick = { state.browse(target) }, enabled = authorized) { Text(label) }
                 }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                onAuthorize?.let { authorize ->
+                    OutlinedButton(onClick = authorize) { Icon(Icons.Rounded.FolderShared, null); Spacer(Modifier.width(6.dp)); Text("授权文件夹") }
+                }
+                TextButton(colors = readableTextButtonColors(), onClick = state::recheckAuthorizedDirectories) { Text("重新检查") }
             }
             Row(Modifier.weight(1f)) {
                 if (wide) LazyColumn(Modifier.width(230.dp), contentPadding = PaddingValues(12.dp)) {
@@ -319,8 +347,8 @@ private fun DirectoryPicker(state: LibraryAdministrationState, wide: Boolean = f
                     if (!directory.loading && directory.error == null) {
                         if (directory.path == null) {
                             if (directory.roots?.isEmpty() == true) item {
-                                Text("请前往 NAS 系统设置 → 应用 → 音乐，设置允许访问的文件夹。")
-                                TextButton(colors = readableTextButtonColors(), onClick = { state.browse(null) }) { Text("重新检查") }
+                                Text(if (onAuthorize != null) "还没有可用的授权文件夹。请点击“授权文件夹”在 fnOS 中选择目录。"
+                                    else "还没有可用的授权文件夹。请在 NAS 系统设置中允许音乐应用访问目录，然后点击“重新检查”。")
                             }
                             directory.roots.orEmpty().groupBy { directoryGroup(it.path) }.forEach { (group, roots) ->
                                 item { Text(group, style = MaterialTheme.typography.titleSmall) }

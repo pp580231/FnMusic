@@ -23,6 +23,7 @@ import com.seasonyuu.fnmusic.core.model.AlbumId
 import com.seasonyuu.fnmusic.core.model.ArtistId
 import com.seasonyuu.fnmusic.core.model.PlaylistId
 import com.seasonyuu.fnmusic.feature.music.MusicUiState
+import com.seasonyuu.fnmusic.feature.music.FolderAuthorizationTarget
 import com.seasonyuu.fnmusic.feature.music.DetailRequestKey
 import com.seasonyuu.fnmusic.feature.music.cacheCurrentDetail
 import com.seasonyuu.fnmusic.feature.music.forDetail
@@ -52,6 +53,15 @@ import javax.inject.Inject
 class MainViewModel @Inject constructor(private val graph: AppGraph, private val savedState: androidx.lifecycle.SavedStateHandle) : ViewModel() {
     val session: StateFlow<SessionState> = graph.session.state
     val loginForm = graph.session.loginForm
+
+    fun folderAuthorizationTarget(): FolderAuthorizationTarget? {
+        val ready = session.value as? SessionState.Ready ?: return null
+        if (!supportsFolderAuthorization(ready.serverVersion)) return null
+        val base = graph.network.baseUrlProvider.value.value ?: return null
+        val relay = ready.profile.endpoint is Endpoint.FnConnect
+        if (relay && graph.network.cookieJar.loadForRequest(base).none { it.name == "mode" && it.value == "relay" }) return null
+        return FolderAuthorizationTarget(base.toString(), relay)
+    }
 
     fun updateLoginForm(form: com.seasonyuu.fnmusic.core.model.LoginForm) = graph.session.updateLoginForm(form)
     val outputController: com.seasonyuu.fnmusic.core.model.PlaybackOutputController = graph.player

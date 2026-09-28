@@ -465,10 +465,13 @@ fun MusicShell(
     onRetrySearch: () -> Unit = {},
     onStreamingQualityChange: suspend (com.seasonyuu.fnmusic.core.model.StreamingQualityPreference) -> Unit = {},
     administration: com.seasonyuu.fnmusic.core.model.MusicAdministration? = null,
+    folderAuthorizationTarget: FolderAuthorizationTarget? = null,
     onCachePreferenceChange: suspend (PlaybackCachePreference) -> Unit = {},
     onClearCache: suspend () -> Unit = {},
     lyricsActions: com.seasonyuu.fnmusic.core.model.LyricsActions? = null,
     aboutActions: com.seasonyuu.fnmusic.core.model.AboutActions? = null,
+    serverVersion: String? = null,
+    mediasrvVersion: String? = null,
     playlistEditing: com.seasonyuu.fnmusic.core.model.PlaylistEditActions? = null,
     onThemeColorChange: suspend (com.seasonyuu.fnmusic.core.model.ThemeColorPreference) -> Unit = {},
     onAppearanceChange: suspend (AppearancePreference) -> Unit = {},
@@ -505,6 +508,13 @@ fun MusicShell(
         val keyboard = LocalSoftwareKeyboardController.current
         fun popPage() { navigation.pop()?.let { pageStateHolder.removeState(it.id) } }
         fun openPage(page: MusicPage) { navigation.push(page = page) }
+        var folderAuthorizationResult by remember { mutableStateOf<FolderAuthorizationResult?>(null) }
+        fun finishFolderAuthorization(result: FolderAuthorizationResult) {
+            if (navigation.current.page == MusicPage.FolderAuthorization) {
+                folderAuthorizationResult = result
+                popPage()
+            }
+        }
         var playerOpen by rememberSaveable { mutableStateOf(false) }
         val immersivePlayer = landscapePlayer && playerOpen && playerState.current != null
         PlayerImmersiveMode(enabled = managePlayerSystemBars && immersivePlayer)
@@ -656,7 +666,7 @@ fun MusicShell(
                 MusicPage.Albums, MusicPage.Artists, MusicPage.Playlists,
             )) || navigation.current.detail is LibraryDetail.ArtistPage || navigation.current.detail is LibraryDetail.PlaylistPage
             FnProgressiveSystemBars(
-                showTopBlur = !playerComposed && !collectionPage && navigation.current.page !in setOf(MusicPage.OnlineLyricsSettings, MusicPage.About, MusicPage.OpenSourceLibraries, MusicPage.OpenSourceDetail) && navigation.current.detail !is LibraryDetail.AlbumPage,
+                showTopBlur = !playerComposed && !collectionPage && navigation.current.page !in setOf(MusicPage.FolderAuthorization, MusicPage.OnlineLyricsSettings, MusicPage.About, MusicPage.OpenSourceLibraries, MusicPage.OpenSourceDetail) && navigation.current.detail !is LibraryDetail.AlbumPage,
                 topBlur = { backdrop ->
                     // Only the content pane is recorded in this backdrop. Keep the
                     // overlay out of the sidebar/rail, including after fold changes.
@@ -714,6 +724,7 @@ fun MusicShell(
                                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
                                 snackbarHost = { SnackbarHost(snackbarHostState) },
                                 bottomBar = {
+                                    if (navigation.current.page != MusicPage.FolderAuthorization) {
                                     FnMusicTheme(darkTheme = !navigationDarkForeground) {
                                     if (compact) {
                                         val backdrop = LocalFnBackdrop.current
@@ -761,6 +772,7 @@ fun MusicShell(
                                         )
                                     }
                                     }
+                                    }
                                 },
                             ) { padding ->
                                 val sceneBackdrop = LocalFnBackdrop.current
@@ -780,7 +792,11 @@ fun MusicShell(
                                         MusicPageHost(
                                             navigation = navigation,
                                             backEnabled = !playerComposed,
-                                            onPop = { popPage() },
+                                            onPop = {
+                                                if (navigation.current.page == MusicPage.FolderAuthorization)
+                                                    finishFolderAuthorization(FolderAuthorizationResult.Closed)
+                                                else popPage()
+                                            },
                                             onNavigationSurfaceChanged = { navigationSurface = it },
                                             onForegroundChanged = { navigationDarkForeground = it },
                                         ) { entry ->
@@ -892,22 +908,38 @@ fun MusicShell(
                                                             onValueChange = onLiquidGlassBlurChange, enabled = state.liquidGlassEnabled,
                                                             onEnabledChange = onLiquidGlassEnabledChange, onSave = onLiquidGlassBlurSave, onBack = ::popPage,
                                                         )
-                                                        MusicPage.AdminLibraries, MusicPage.AdminUsers, MusicPage.AdminServer -> {
+                                                        MusicPage.AdminLibraries, MusicPage.FolderAuthorization, MusicPage.AdminUsers, MusicPage.AdminServer -> {
                                                             if (state.user?.role != "admin" || administration == null) {
                                                                 LaunchedEffect(entry.id) { popPage() }
                                                             } else when (entry.page) {
-                                                                MusicPage.AdminLibraries -> LibraryAdministrationScreen(administration, ::popPage) {
+                                                                MusicPage.AdminLibraries -> LibraryAdministrationScreen(
+                                                                    api = administration,
+                                                                    onBack = ::popPage,
+                                                                    authorizationTarget = folderAuthorizationTarget,
+                                                                    onAuthorize = { request ->
+                                                                        if (navigation.current.id == entry.id)
+                                                                            navigation.push(page = MusicPage.FolderAuthorization, folderAuthorization = request)
+                                                                    },
+                                                                    authorizationResult = folderAuthorizationResult.takeIf { navigation.current.id == entry.id },
+                                                                    onAuthorizationResultConsumed = { folderAuthorizationResult = null },
+                                                                    isActive = navigation.current.id == entry.id,
+                                                                ) {
                                                                     catalogEditVersion++
                                                                     artistItems.refresh()
                                                                     favoriteItems.refresh()
                                                                     onRefresh()
                                                                     onRetrySearch()
                                                                 }
+                                                                MusicPage.FolderAuthorization -> entry.folderAuthorization?.let { request ->
+                                                                    FolderAuthorizationPage(request, ::finishFolderAuthorization) {
+                                                                        finishFolderAuthorization(FolderAuthorizationResult.Closed)
+                                                                    }
+                                                                } ?: run { LaunchedEffect(entry.id) { popPage() } }
                                                                 MusicPage.AdminUsers -> UserAdministrationScreen(administration, state.user.id, ::popPage)
                                                                 else -> ServerAdministrationScreen(administration, ::popPage)
                                                             }
                                                         }
-                                                        MusicPage.About -> aboutActions?.let { AboutScreen(it, { openPage(MusicPage.OpenSourceLibraries) }, ::popPage) }
+                                                        MusicPage.About -> aboutActions?.let { AboutScreen(it, { openPage(MusicPage.OpenSourceLibraries) }, ::popPage, serverVersion, mediasrvVersion) }
                                                         MusicPage.OpenSourceLibraries -> aboutActions?.let { OpenSourceLibrariesScreen(it, { id -> navigation.push(page = MusicPage.OpenSourceDetail, libraryId = id) }, ::popPage) }
                                                         MusicPage.OpenSourceDetail -> aboutActions?.let { OpenSourceDetailScreen(it, entry.libraryId, ::popPage) }
                                                         MusicPage.Quality -> QualitySettingsScreen(state.streamingQuality, onStreamingQualityChange, ::popPage)
@@ -1802,9 +1834,10 @@ internal fun PageTitle(
     onBack: (() -> Unit)? = null,
     subtitle: String? = null,
     actions: @Composable RowScope.() -> Unit = {},
+    drawBackgroundBlur: Boolean = true,
 ) {
     Column {
-        MusicAppBar(title, onBack = onBack, actions = actions)
+        MusicAppBar(title, onBack = onBack, actions = actions, drawBackgroundBlur = drawBackgroundBlur)
         if (subtitle != null) Text(subtitle, color = FnTextSecondary, style = MaterialTheme.typography.bodyMedium)
     }
 }

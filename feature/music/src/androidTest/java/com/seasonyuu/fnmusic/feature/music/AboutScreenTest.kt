@@ -17,6 +17,14 @@ import org.junit.Test
 class AboutScreenTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun showsBothServerVersionsSeparatelyFromAndroidVersion() {
+        val actions = Stub()
+        compose.setContent { FnMusicTheme { Surface { AboutScreen(actions, {}, {}, "1.0.10", "1.0.11") } } }
+        compose.onNodeWithText("${actions.info.versionName} (${actions.info.versionCode})").assertExists()
+        compose.onNodeWithText("音乐应用版本").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("1.0.10(1.0.11)").performScrollTo().assertIsDisplayed()
+    }
+
     @Test fun manualCheckDisablesRepeatedRequestsAndShowsFailureRetry() {
         val actions = Stub()
         compose.setContent { FnMusicTheme { Surface { AboutScreen(actions, {}, {}) } } }

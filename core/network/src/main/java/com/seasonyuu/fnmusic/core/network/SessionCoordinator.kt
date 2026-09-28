@@ -129,7 +129,8 @@ class SessionCoordinator(
         if (restoredSession != null) {
             val (validatedToken, existingConfig, user) = restoredSession
             vault.save(SavedCredentials(profile, passwordHash, validatedToken))
-            mutableState.value = SessionState.Ready(profile, existingConfig.serverName, existingConfig.serverVersion, user)
+            mutableState.value = SessionState.Ready(profile, existingConfig.serverName, existingConfig.serverVersion,
+                user, existingConfig.mediasrvVersion)
             return
         }
 
@@ -138,7 +139,7 @@ class SessionCoordinator(
         val config = network.sessionApi.systemConfig().requireData()
         vault.save(SavedCredentials(profile, passwordHash, token))
         mutableState.value = SessionState.Ready(profile, config.serverName, config.serverVersion,
-            login.user?.toMusicUser())
+            login.user?.toMusicUser(), config.mediasrvVersion)
     }
 
     private suspend fun authenticate(profile: ConnectionProfile, passwordHash: String, baseUrl: HttpUrl): LoginData {

@@ -57,7 +57,13 @@ private fun AboutPage(title: String, tag: String, onBack: () -> Unit, content: @
 }
 
 @Composable
-internal fun AboutScreen(actions: AboutActions, onLibraries: () -> Unit, onBack: () -> Unit) {
+internal fun AboutScreen(
+    actions: AboutActions,
+    onLibraries: () -> Unit,
+    onBack: () -> Unit,
+    serverVersion: String? = null,
+    mediasrvVersion: String? = null,
+) {
     val update by actions.update.collectAsState()
     val openLink = rememberAboutLinkOpener()
     val context = LocalContext.current
@@ -80,6 +86,15 @@ internal fun AboutScreen(actions: AboutActions, onLibraries: () -> Unit, onBack:
                     Text("你的音乐，随时聆听", style = MaterialTheme.typography.titleMedium)
                     Text("FnMusic 是面向飞牛 OS 音乐服务的非官方 Android 客户端，让你随时浏览、收藏和聆听自己的音乐。",
                         style = MaterialTheme.typography.bodyMedium, color = FnTextSecondary)
+                }
+            }
+            item {
+                SettingsCard {
+                    Text("音乐应用版本", style = MaterialTheme.typography.titleMedium)
+                    SelectionContainer {
+                        Text("${serverVersion?.trim()?.takeIf { it.isNotEmpty() } ?: "未提供"}(${mediasrvVersion?.trim()?.takeIf { it.isNotEmpty() } ?: "未提供"})",
+                            style = MaterialTheme.typography.bodyMedium, color = FnTextSecondary)
+                    }
                 }
             }
             item {

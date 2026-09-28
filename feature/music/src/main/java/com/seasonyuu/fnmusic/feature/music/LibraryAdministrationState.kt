@@ -73,6 +73,7 @@ internal class LibraryAdministrationState(private val api: MusicAdministration, 
     var children by mutableStateOf(emptyList<MusicDirectory>()); private set
     var directoryLoading by mutableStateOf(false); private set
     var directoryError by mutableStateOf<String?>(null); private set
+    var authorizationPendingPaths by mutableStateOf(emptyList<String>()); private set
     var pendingScans by mutableStateOf(emptyMap<String, Set<String>>()); private set
     val directoryScrollPositions = mutableMapOf<String, Pair<Int, Int>>()
     private val taskMutex = Mutex()
@@ -145,7 +146,7 @@ internal class LibraryAdministrationState(private val api: MusicAdministration, 
     }
     fun create() {
         if (folders == null || folders!!.size >= 200) { actionError = "最多只能添加 200 个文件夹"; return }
-        editingGuid = null; draft = LibraryDraft(); editError = null
+        editingGuid = null; draft = LibraryDraft(); editError = null; authorizationPendingPaths = emptyList()
         pickerOpen = true; browse(null)
     }
     fun edit(guid: String) {
@@ -190,19 +191,45 @@ internal class LibraryAdministrationState(private val api: MusicAdministration, 
         message = "搜索索引已重建" + listOfNotNull(result.trackCount?.let { "$it 首歌曲" }, result.albumCount?.let { "$it 张专辑" }, result.artistCount?.let { "$it 位艺术家" }).joinToString("，").let { if (it.isEmpty()) "" else "：$it" }
         onCatalogChanged()
     }
-    fun browse(path: String?) {
+    fun browse(path: String?, confirmationPaths: List<String> = emptyList()) {
         directoryJob?.cancel()
         val generation = ++directoryGeneration
         directory = path; children = emptyList(); directoryError = null; directoryLoading = true
         directoryJob = scope.launch {
             try {
-                if (path == null || roots == null) { val result = api.authorizedDirectories(); if (generation == directoryGeneration) roots = result }
+                if (path == null || roots == null) {
+                    val result = api.authorizedDirectories()
+                    if (generation == directoryGeneration) {
+                        roots = result
+                        if (confirmationPaths.isNotEmpty()) {
+                            val confirmed = confirmationPaths.all { selected -> result.any { root ->
+                                val base = normalizedLibraryPath(root.path)
+                                val candidate = normalizedLibraryPath(selected)
+                                candidate == base || candidate.startsWith("$base/")
+                            } }
+                            if (confirmed) {
+                                authorizationPendingPaths = emptyList()
+                                message = "已更新授权文件夹，请选择目录"
+                            } else message = "暂未发现新增授权，请重新检查"
+                        }
+                    }
+                }
                 if (path != null) { val result = api.childDirectories(path); if (generation == directoryGeneration) children = result }
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { if (generation == directoryGeneration) directoryError = "无法访问此目录，请检查连接或音乐应用的目录权限" }
+            catch (e: Exception) {
+                if (generation == directoryGeneration) {
+                    directoryError = "无法访问此目录，请检查连接或音乐应用的目录权限"
+                    if (confirmationPaths.isNotEmpty()) message = "暂时无法确认授权，请重新检查"
+                }
+            }
             finally { if (generation == directoryGeneration) directoryLoading = false }
         }
     }
+    fun authorizationSucceeded(paths: List<String>) {
+        authorizationPendingPaths = paths
+        browse(null, paths)
+    }
+    fun recheckAuthorizedDirectories() = browse(null, authorizationPendingPaths)
     fun directoryUp() {
         val current = directory ?: return
         val root = roots.orEmpty().filter { normalizedLibraryPath(current).startsWith(normalizedLibraryPath(it.path) + "/") || normalizedLibraryPath(current) == normalizedLibraryPath(it.path) }.maxByOrNull { it.path.length }

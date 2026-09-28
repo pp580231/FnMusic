@@ -38,7 +38,8 @@ import java.io.File
 class LibraryAdministrationScreenTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private val api = LibraryStub()
-    private fun content(dark: Boolean = false, fontScale: Float = 1f) {
+    private fun content(dark: Boolean = false, fontScale: Float = 1f,
+        authorizationTarget: FolderAuthorizationTarget? = null) {
         compose.activityRule.scenario.onActivity { it.enableEdgeToEdge() }
         compose.setContent {
             val density = LocalDensity.current
@@ -60,7 +61,7 @@ class LibraryAdministrationScreenTest {
                                     val sceneBackdrop = LocalFnBackdrop.current!!
                                     Box(Modifier.fillMaxSize().layerBackdrop(sceneBackdrop)) {
                                         CompositionLocalProvider(LocalBottomOverlayPadding provides 120.dp, LocalAppBarBackdrop provides backdrop) {
-                                            LibraryAdministrationScreen(api, {})
+                                            LibraryAdministrationScreen(api, {}, authorizationTarget = authorizationTarget)
                                         }
                                     }
                                     Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(120.dp)
@@ -81,7 +82,6 @@ class LibraryAdministrationScreenTest {
         val target = File(context.getExternalFilesDir(null), "library-$name.png")
         compose.mainClock.advanceTimeBy(300)
         compose.waitForIdle()
-        Thread.sleep(400) // Also let the platform Dialog window finish its opening animation.
         target.outputStream().use { InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
     @Test fun addUsesDirectoryPickerAndLocalMetadataDisablesLyrics() {
@@ -89,6 +89,7 @@ class LibraryAdministrationScreenTest {
         screenshot("overview-light")
         compose.onNodeWithContentDescription("添加文件夹").performClick()
         compose.waitUntil { compose.onAllNodesWithText("音乐位置").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("授权文件夹").assertDoesNotExist()
         screenshot("picker-light")
         compose.onAllNodesWithText("音乐位置").onLast().performClick()
         compose.waitUntil { compose.onAllNodesWithText("新音乐").fetchSemanticsNodes().isNotEmpty() }
@@ -106,6 +107,12 @@ class LibraryAdministrationScreenTest {
         assertEquals("/vol1/1000/Music/New", api.savedPath)
         assertEquals(false, api.savedLyrics)
         assertEquals(0, api.scans)
+    }
+
+    @Test fun availableAuthorizationTargetShowsFolderEntry() {
+        content(authorizationTarget = FolderAuthorizationTarget("https://nas.example/music/"))
+        compose.onNodeWithContentDescription("添加文件夹").performClick()
+        compose.onNodeWithText("授权文件夹").assertIsDisplayed()
     }
     @Test fun editingKeepsDraftAndTasksExposeCancellationAndRetry() {
         content(dark = true, fontScale = 1.4f)

@@ -69,6 +69,7 @@ sealed interface SessionState {
         val serverName: String? = null,
         val serverVersion: String? = null,
         val user: MusicUser? = null,
+        val mediasrvVersion: String? = null,
     ) : SessionState
 
     data class Error(

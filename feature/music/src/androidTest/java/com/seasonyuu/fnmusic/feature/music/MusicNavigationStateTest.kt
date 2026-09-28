@@ -37,6 +37,34 @@ class MusicNavigationStateTest {
         }
     }
 
+    @Test fun folderAuthorizationRouteRestoresItsCallbackStateAndParent() {
+        lateinit var navigation: MusicNavigationState
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            navigation = rememberSaveable(saver = MusicNavigationState.Saver) { MusicNavigationState() }
+        }
+        val request = FolderAuthorizationRequest.create(
+            FolderAuthorizationTarget("https://relay.fnos.net/music/", relayMode = true),
+            listOf("/vol1/1000/Existing"), "test-state")
+        compose.runOnIdle {
+            navigation.select(MusicDestination.Profile)
+            navigation.push(page = MusicPage.AdminLibraries)
+            navigation.push(page = MusicPage.FolderAuthorization, folderAuthorization = request)
+        }
+        restoration.emulateSavedInstanceStateRestore()
+        compose.runOnIdle {
+            assertEquals(MusicPage.FolderAuthorization, navigation.current.page)
+            val restored = requireNotNull(navigation.current.folderAuthorization)
+            assertEquals(request.url, restored.url)
+            assertEquals(request.origin, restored.origin)
+            assertEquals(request.callbackPath, restored.callbackPath)
+            assertEquals(request.state, restored.state)
+            assertTrue(restored.relayMode)
+            navigation.pop()
+            assertEquals(MusicPage.AdminLibraries, navigation.current.page)
+        }
+    }
+
     @Test fun liquidGlassRestoresAndReturnsToSettings() {
         lateinit var navigation: MusicNavigationState
         val restoration = StateRestorationTester(compose)

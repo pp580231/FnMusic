@@ -696,6 +696,16 @@ UNRESOLVED
 - 不依赖列表项的未验证字段名。
 - 保留服务端升级后快速替换路径、常量和签名规则的能力。
 
+### 11.5 fnOS 文件夹授权跳转（当前 Web 行为）
+
+新版音乐 Web 的“授权文件夹”从当前音乐服务地址的**同源根路径**打开 `GET /app-auth/pick-shared-file`。查询参数包括 `appName=trim.music`、同源绝对回调地址 `{origin}/music/app-auth-pick-file`（参数名 `redirectUri`）、每次启动随机的 `state`、`sidebarGroup=myFiles,team,external,remote,storage`，以及用逗号连接现有授权目录的 `disabledPaths`。这是 fnOS 页面，不是音乐 API。Web 使用独立窗口；Android 在普通导航页面中用应用内 WebView 承接相同流程，返回后恢复添加文件夹草稿。
+
+Android 仅在 `/api/v1/sys/config` 的 `serverVersion` **大于等于 1.0.10** 时显示“授权文件夹”；缺失或无法解析的版本也不显示。`mediasrvVersion` 仅用于展示，不参与入口判断。旧版本仍可浏览已授权目录，并可在 NAS 系统设置中授权后点击“重新检查”。
+
+fnOS 页面独立检查**系统登录及管理员身份**。未登录时，脚本会把原授权 URL 放进登录页的 `redirect_uri`，登录后再回到选择页；音乐应用的 `music-token` 不能代替 fnOS 登录。用户确认时，由 fnOS 写入文件夹权限，然后跳转音乐回调，带 `method=music-app-auth-pick-file`、`appName`、`state`、`status=success|cancel|error`；成功时 `path` 是 JSON 路径数组。Android 只在来源同源、回调路径精确匹配且这些字段通过校验后接受返回；成功后重新读取音乐服务 `authorizedDirectories()`，以服务端列表确认目录已可用。目录列表未更新时保留“重新检查”，也不自动创建音乐库。
+
+FN Connect 中继另需 `mode=relay` **路由 Cookie**。Android 的 OkHttp CookieJar 与 WebView CookieManager 不共享：打开授权 WebView 前，仅给当前中继域名设置 `mode=relay`，不复制 `music-token` 或音乐密码。全新浏览器若没有这个 Cookie，可能先进入 FN Connect 引导页。中继授权入口的首个文档请求即使显示 HTTP 404，浏览器仍可能加载 fnOS 脚本并呈现完整授权页，因此不能单凭该状态拦截；网络错误与证书错误仍需正常处理。以上页面展示和跳转依据当前 Web 静态包及浏览器观察，尚未对真实 NAS 提交新的授权；确认后的服务端可见时机待实机验收。
+
 ## 12. 验证脚本
 
 ### 12.1 FN Connect 全流程

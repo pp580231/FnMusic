@@ -44,7 +44,7 @@ class SessionCoordinatorTest {
         server.enqueue(
             MockResponse()
                 .setHeader("Content-Type", "application/json")
-                .setBody("""{"code":0,"msg":"ok","data":{"serverName":"Test NAS","serverVersion":"1"}}"""),
+                .setBody("""{"code":0,"msg":"ok","data":{"serverName":"Test NAS","serverVersion":"1","mediasrvVersion":"1.0.11"}}"""),
         )
         val profile = ConnectionProfile(
             endpoint = Endpoint.Direct(server.url("/").toString()),
@@ -58,7 +58,7 @@ class SessionCoordinatorTest {
 
         coordinator.reconnect()
 
-        assertTrue(coordinator.state.value is SessionState.Ready)
+        assertEquals("1.0.11", (coordinator.state.value as SessionState.Ready).mediasrvVersion)
         assertEquals("fresh-token", vault.saved?.token)
         assertEquals("/music/api/v1/user/me", server.takeRequest().path)
         assertEquals("/music/api/v1/user/password-login", server.takeRequest().path)
@@ -188,7 +188,7 @@ class SessionCoordinatorTest {
     @Test
     fun `restored session retains current user identity`() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"code":0,"data":{"guid":"test-user","name":"Listener","role":"admin","lastAccessedAt":"2026-09-01"}}"""))
-        server.enqueue(MockResponse().setBody("""{"code":0,"data":{"serverName":"Test NAS"}}"""))
+        server.enqueue(MockResponse().setBody("""{"code":0,"data":{"serverName":"Test NAS","mediasrvVersion":"1.0.9"}}"""))
         val profile = ConnectionProfile(Endpoint.Direct(server.url("/").toString()), "tester", true)
         val coordinator = SessionCoordinator(NetworkRuntime(), FakeSessionVault(SavedCredentials(profile, "hash", "token")))
 
@@ -198,6 +198,7 @@ class SessionCoordinatorTest {
         assertEquals("test-user", ready.user?.id)
         assertEquals("Listener", ready.user?.name)
         assertEquals("admin", ready.user?.role)
+        assertEquals("1.0.9", ready.mediasrvVersion)
         assertEquals(2, server.requestCount)
     }
 
