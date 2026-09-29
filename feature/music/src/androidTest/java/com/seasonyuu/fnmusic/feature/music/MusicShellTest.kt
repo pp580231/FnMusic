@@ -28,6 +28,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
@@ -3739,6 +3740,159 @@ class MusicShellTest {
     }
 
     @Test
+    fun artistDetailGlassTabsDragOnReleaseAndRestoreAfterAlbumDetail() {
+        val artist = Artist(ArtistId("artist-tabs"), "标签测试歌手", trackCount = 48, albumCount = 48)
+        val songs = (1..48).map { Track(TrackId("artist-song-$it"), "歌手歌曲 $it") }
+        val albums = (1..48).map { Album(AlbumId("artist-album-$it"), "歌手专辑 $it") }
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        var playAll: ArtistId? = null
+        setContent(
+            restoration = restoration,
+            state = MusicUiState(loading = false, detailArtist = artist),
+            artists = PagingData.from(listOf(artist)),
+            artistTracks = PagingData.from(songs),
+            artistAlbums = PagingData.from(albums),
+            onPlayAllArtistTracks = { playAll = it },
+        )
+        compose.onNodeWithContentDescription("音乐库").performClick()
+        compose.onNodeWithText("全部歌手").performClick()
+        compose.onNodeWithText(artist.name).performClick()
+        compose.onNodeWithTag("artist-tab-tracks").assertIsSelected()
+        compose.onNodeWithTag("artist-tracks-list").assertExists()
+        compose.onNodeWithTag("collection-play-all").performClick()
+        compose.runOnIdle { assertEquals(artist.id, playAll) }
+
+        val bounds = compose.onNodeWithTag("artist-detail-tabs").fetchSemanticsNode().boundsInRoot
+        val heroBottom = compose.onNodeWithTag("artist-hero-cover").fetchSemanticsNode().boundsInRoot.bottom
+        val metadata = compose.onNodeWithText("48 首歌曲 · 48 张专辑").fetchSemanticsNode().boundsInRoot
+        val playAllBounds = compose.onNodeWithTag("collection-play-all").fetchSemanticsNode().boundsInRoot
+        val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+        assertTrue(metadata.top >= heroBottom - 2f)
+        assertTrue(bounds.top >= metadata.bottom - 2f)
+        assertEquals(playAllBounds.top, bounds.top, 2f)
+        assertEquals(48f * density, bounds.height, 2f)
+        compose.onRoot().performTouchInput {
+            down(Offset(bounds.left + bounds.width / 4f, bounds.center.y))
+            moveTo(Offset(bounds.left + bounds.width * 3f / 4f, bounds.center.y), 500)
+        }
+        compose.mainClock.advanceTimeBy(800)
+        compose.onNodeWithTag("artist-tab-tracks").assertIsSelected()
+        compose.onNodeWithTag("artist-albums-grid").assertDoesNotExist()
+        compose.onRoot().performTouchInput { up() }
+        compose.waitForIdle()
+        compose.onNodeWithTag("artist-tab-albums").assertIsSelected()
+        compose.runOnIdle { playAll = null }
+        compose.onNodeWithTag("collection-play-all").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(artist.id, playAll) }
+        compose.onNodeWithTag("artist-hero-cover").performTouchInput {
+            swipe(Offset(centerX, height * .9f), Offset(centerX, height * .1f), 700)
+        }
+        compose.onNodeWithTag("artist-albums-grid").performScrollToNode(hasText("歌手专辑 35"))
+        val pinnedTabs = compose.onNodeWithTag("artist-detail-tabs").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("artist-list-transition-blur").assertExists()
+        val appBarBottom = compose.onNodeWithTag("collection-app-bar").fetchSemanticsNode().boundsInRoot.bottom
+        assertTrue(pinnedTabs.top < bounds.top)
+        assertTrue(pinnedTabs.top >= appBarBottom - 2f)
+        val before = compose.onNodeWithText("歌手专辑 35").fetchSemanticsNode().boundsInRoot.top
+        compose.onNodeWithText("歌手专辑 35").performClick()
+        compose.onNodeWithContentDescription("返回").performClick()
+        val after = compose.onNodeWithText("歌手专辑 35").assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top
+        assertEquals(before, after, 3f)
+        assertEquals(pinnedTabs.top, compose.onNodeWithTag("artist-detail-tabs").fetchSemanticsNode().boundsInRoot.top, 2f)
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("歌手专辑 35").assertIsDisplayed()
+        compose.onNodeWithTag("artist-albums-grid").performScrollToIndex(0)
+        compose.onNodeWithTag("artist-tab-albums").assertIsSelected()
+        compose.onNodeWithTag("artist-tab-tracks").performClick()
+        compose.onNodeWithTag("artist-tracks-list").performScrollToNode(hasText("歌手歌曲 1"))
+        compose.onNodeWithText("歌手歌曲 1").assertIsDisplayed()
+        compose.onNodeWithTag("artist-tracks-list").performScrollToNode(hasText("歌手歌曲 35"))
+        val pinnedSongTabs = compose.onNodeWithTag("artist-detail-tabs").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(pinnedSongTabs.top >= appBarBottom - 2f)
+    }
+
+    @Test
+    fun artistDetailTabsKeepDragAndEmptyStatesWithoutGlass() {
+        val artist = Artist(ArtistId("artist-empty"), "空列表歌手")
+        setContent(
+            state = MusicUiState(loading = false, detailArtist = artist, liquidGlassEnabled = false),
+            artists = PagingData.from(listOf(artist)),
+        )
+        compose.onNodeWithContentDescription("音乐库").performClick()
+        compose.onNodeWithText("全部歌手").performClick()
+        compose.onNodeWithText(artist.name).performClick()
+        compose.onNodeWithTag("artist-tracks-list").performScrollToNode(hasText("暂无曲目"))
+        compose.onNodeWithText("暂无曲目").assertIsDisplayed()
+        compose.onNodeWithTag("artist-tab-albums").performClick()
+        compose.onNodeWithTag("artist-albums-grid").performScrollToNode(hasText("暂无专辑"))
+        compose.onNodeWithText("暂无专辑").assertIsDisplayed()
+        compose.onNodeWithTag("artist-detail-tabs").performTouchInput {
+            swipe(Offset(width * .75f, centerY), Offset(width * .25f, centerY), 400)
+        }
+        compose.onNodeWithTag("artist-tab-tracks").assertIsSelected()
+    }
+
+    @Test
+    fun artistDetailTabSwitchKeepsHeaderAndControlsInPlace() {
+        val artist = Artist(ArtistId("artist-transition"), "转场测试歌手", trackCount = 1, albumCount = 1)
+        setContent(
+            state = MusicUiState(loading = false, detailArtist = artist),
+            artists = PagingData.from(listOf(artist)),
+            artistTracks = PagingData.from(listOf(Track(TrackId("transition-song"), "转场歌曲"))),
+            artistAlbums = PagingData.from(listOf(Album(AlbumId("transition-album"), "转场专辑"))),
+        )
+        compose.onNodeWithContentDescription("音乐库").performClick()
+        compose.onNodeWithText("全部歌手").performClick()
+        compose.onNodeWithText(artist.name).performClick()
+        // A partially collapsed shared header must not reset when the new list starts at zero.
+        compose.onNodeWithTag("artist-hero-cover").performTouchInput {
+            swipe(Offset(centerX, height * .7f), Offset(centerX, height * .5f), 1000)
+        }
+        val heroBefore = compose.onNodeWithTag("artist-hero-cover").fetchSemanticsNode().boundsInRoot
+        val controlsBefore = compose.onNodeWithTag("artist-detail-controls").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("artist-tab-albums").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("artist-tracks-list").assertDoesNotExist()
+        compose.onNodeWithTag("artist-albums-grid").assertExists()
+        assertEquals(heroBefore.top, compose.onNodeWithTag("artist-hero-cover").fetchSemanticsNode().boundsInRoot.top, 2f)
+        assertEquals(controlsBefore.top, compose.onNodeWithTag("artist-detail-controls").fetchSemanticsNode().boundsInRoot.top, 2f)
+        compose.onNodeWithTag("collection-play-all").assertIsDisplayed()
+        compose.onNodeWithTag("artist-albums-grid").performScrollToNode(hasText("转场专辑"))
+        compose.onNodeWithText("转场专辑").assertIsDisplayed()
+    }
+
+    @Test
+    fun artistAlbumPageFailureCanRetryWithoutLosingSelection() {
+        val artist = Artist(ArtistId("artist-retry"), "重试测试歌手", albumCount = 1)
+        val failed = java.util.concurrent.atomic.AtomicBoolean(true)
+        setContent(
+            state = MusicUiState(loading = false, detailArtist = artist),
+            artists = PagingData.from(listOf(artist)),
+            artistAlbumPages = {
+                androidx.paging.Pager(androidx.paging.PagingConfig(pageSize = 30)) {
+                    object : androidx.paging.PagingSource<Int, Album>() {
+                        override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Album> =
+                            if (failed.get()) LoadResult.Error(IllegalStateException("无法读取专辑"))
+                            else LoadResult.Page(listOf(Album(AlbumId("recovered"), "恢复专辑")), null, null)
+                        override fun getRefreshKey(state: androidx.paging.PagingState<Int, Album>): Int? = null
+                    }
+                }.flow
+            },
+        )
+        compose.onNodeWithContentDescription("音乐库").performClick()
+        compose.onNodeWithText("全部歌手").performClick()
+        compose.onNodeWithText(artist.name).performClick()
+        compose.onNodeWithTag("artist-tab-albums").performClick()
+        compose.onNodeWithTag("artist-albums-grid").performScrollToNode(hasText("无法读取专辑"))
+        compose.onNodeWithText("无法读取专辑").assertIsDisplayed()
+        failed.set(false)
+        compose.onNodeWithText("重试").performClick()
+        compose.onNodeWithTag("artist-albums-grid").performScrollToNode(hasText("恢复专辑"))
+        compose.onNodeWithText("恢复专辑").assertIsDisplayed()
+        compose.onNodeWithTag("artist-tab-albums").assertIsSelected()
+    }
+
+    @Test
     fun playlistLibraryShowsServerReportedTotal() {
         setContent(state = MusicUiState(loading = false, playlistTotal = 6))
 
@@ -4365,6 +4519,11 @@ class MusicShellTest {
         playerStateProvider: (() -> PlayerState)? = null,
         albums: PagingData<Album> = PagingData.empty(),
         tracks: PagingData<Track> = PagingData.empty(),
+        artists: PagingData<Artist> = PagingData.empty(),
+        artistAlbums: PagingData<Album> = PagingData.empty(),
+        artistTracks: PagingData<Track> = PagingData.empty(),
+        artistAlbumPages: ((ArtistId) -> kotlinx.coroutines.flow.Flow<PagingData<Album>>)? = null,
+        onPlayAllArtistTracks: (ArtistId) -> Unit = {},
         onToggleShuffle: () -> Unit = {},
         onCycleRepeatMode: () -> Unit = {},
         onTogglePlayback: () -> Unit = {},
@@ -4413,6 +4572,8 @@ class MusicShellTest {
             val pagingScope = androidx.compose.runtime.rememberCoroutineScope()
             val trackFlow = androidx.compose.runtime.remember(tracks) { flowOf(tracks).cachedIn(pagingScope) }
             val albumFlow = androidx.compose.runtime.remember(albums) { flowOf(albums).cachedIn(pagingScope) }
+            val artistTrackFlow = androidx.compose.runtime.remember(artistTracks) { flowOf(artistTracks).cachedIn(pagingScope) }
+            val artistAlbumFlow = androidx.compose.runtime.remember(artistAlbums) { flowOf(artistAlbums).cachedIn(pagingScope) }
             MusicTestWindow(windowSize?.invoke(), testFontScale()) {
                 FnMusicTheme {
                     MusicShell(
@@ -4423,7 +4584,9 @@ class MusicShellTest {
                         playerState = playerStateProvider?.invoke() ?: playerState,
                         pagedTracks = { sort -> onTrackSort(sort); trackFlow },
                         pagedAlbums = { albumFlow },
-                        pagedArtists = flowOf(PagingData.empty()),
+                        pagedArtists = flowOf(artists),
+                        pagedArtistTracks = { artistTrackFlow },
+                        pagedArtistAlbums = { id -> artistAlbumPages?.invoke(id) ?: artistAlbumFlow },
                         pagedFavorites = flowOf(PagingData.empty()),
                         coverUrl = { _, _ -> null },
                         onRefresh = {},
@@ -4434,6 +4597,7 @@ class MusicShellTest {
                         onPlayAllFavorites = {},
                         onLoadAlbum = { detailKey.value = DetailRequestKey("album", it.value) },
                         onLoadArtist = { detailKey.value = DetailRequestKey("artist", it.value) },
+                        onPlayAllArtistTracks = onPlayAllArtistTracks,
                         onLoadPlaylist = {
                             detailKey.value = DetailRequestKey("playlist", it.value)
                         },

@@ -1,15 +1,59 @@
 package com.seasonyuu.fnmusic.data
 
+import androidx.paging.testing.asSnapshot
 import com.seasonyuu.fnmusic.core.model.AlbumId
 import com.seasonyuu.fnmusic.core.model.ArtistId
 import com.seasonyuu.fnmusic.core.network.NetworkRuntime
 import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CatalogDetailRepositoryTest {
+    @Test fun artistListsPageIndependentlyAndPlayAllReadsPastTwoHundredTracks() = runBlocking {
+        val server = MockWebServer()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val url = requireNotNull(request.requestUrl)
+                val page = requireNotNull(url.queryParameter("page")).toInt()
+                val size = requireNotNull(url.queryParameter("size")).toInt()
+                val albums = url.encodedPath.endsWith("/album/artist-detail/list")
+                val total = if (albums) 37 else 205
+                val items = ((page - 1) * size until minOf(page * size, total)).joinToString(",") { index ->
+                    if (albums) """{"guid":"album-$index","name":"Album $index","artists":[{"guid":"artist","name":"Singer"}]}"""
+                    else """{"guid":"track-$index","title":"Track $index"}"""
+                }
+                return MockResponse().setHeader("Content-Type", "application/json")
+                    .setBody("""{"code":0,"data":{"total":$total,"list":[$items]}}""")
+            }
+        }
+        server.start()
+        try {
+            val runtime = NetworkRuntime()
+            runtime.activateBaseUrl(server.url("/music/"), allowPrivateLanHttp = true)
+            val repository = MusicCatalogRepository(runtime.api)
+            val id = ArtistId("artist")
+
+            val tracks = repository.artistTracks(id).asSnapshot { scrollTo(204) }
+            val albums = repository.artistAlbums(id).asSnapshot { scrollTo(36) }
+            assertEquals(205, tracks.size)
+            assertEquals("track-204", tracks.last().id.value)
+            assertEquals(37, albums.size)
+            assertEquals("album-36", albums.last().id.value)
+            assertEquals("Singer", albums.first().artists.single().name)
+            assertEquals(205, repository.allArtistTracks(id).size)
+
+            val requests = (0 until server.requestCount).map { requireNotNull(server.takeRequest().requestUrl) }
+            assertTrue(requests.any { it.encodedPath == "/music/api/v1/track/artist-detail/list" && it.queryParameter("page") == "2" })
+            assertTrue(requests.any { it.encodedPath == "/music/api/v1/album/artist-detail/list" && it.queryParameter("page") == "2" })
+            assertTrue(requests.all { it.queryParameter("artistGUID") == "artist" && it.queryParameter("artistGuid") == null })
+        } finally { server.shutdown() }
+    }
+
     @Test fun catalogPagesExposeTotalsBeyondTheirLoadedItems() = runBlocking {
         val server = MockWebServer()
         server.start()
@@ -69,6 +113,21 @@ class CatalogDetailRepositoryTest {
             server.enqueue(page("""{"code":0,"data":{"total":3,"list":[{"guid":"a"},{"guid":"b"}]}}"""))
             server.enqueue(page("""{"code":0,"data":{"total":3,"list":[]}}"""))
             org.junit.Assert.assertTrue(runCatching { repository.playlistTracks(id, size = 2) }.isFailure)
+        } finally { server.shutdown() }
+    }
+
+    @Test fun artistPlayAllRejectsAnIncompleteResponse() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        try {
+            fun page(body: String) = MockResponse().setHeader("Content-Type", "application/json").setBody(body)
+            server.enqueue(page("""{"code":0,"data":{"total":3,"list":[{"guid":"one"},{"guid":"two"}]}}"""))
+            server.enqueue(page("""{"code":0,"data":{"total":3,"list":[]}}"""))
+            val runtime = NetworkRuntime()
+            runtime.activateBaseUrl(server.url("/music/"), allowPrivateLanHttp = true)
+            assertTrue(runCatching { MusicCatalogRepository(runtime.api).allArtistTracks(ArtistId("artist")) }.isFailure)
+            assertEquals("1", server.takeRequest().requestUrl!!.queryParameter("page"))
+            assertEquals("2", server.takeRequest().requestUrl!!.queryParameter("page"))
         } finally { server.shutdown() }
     }
 
