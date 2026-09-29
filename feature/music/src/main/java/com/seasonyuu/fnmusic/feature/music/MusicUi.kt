@@ -29,6 +29,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -38,11 +39,15 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.SpringSpec
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.LocalIndication
@@ -159,9 +164,11 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -205,6 +212,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.compositionLocalOf
 import androidx.paging.LoadState
 import androidx.paging.PagingData
+import androidx.paging.cachedIn
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
@@ -261,6 +269,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawPlainBackdrop
@@ -426,6 +435,8 @@ fun MusicShell(
     pagedTracks: (TrackSort) -> Flow<PagingData<Track>>,
     pagedAlbums: (AlbumSort) -> Flow<PagingData<Album>>,
     pagedArtists: Flow<PagingData<Artist>>,
+    pagedArtistTracks: (ArtistId) -> Flow<PagingData<Track>>,
+    pagedArtistAlbums: (ArtistId) -> Flow<PagingData<Album>>,
     pagedFavorites: Flow<PagingData<Track>>,
     coverUrl: (String?, Int) -> String?,
     onRefresh: () -> Unit,
@@ -436,6 +447,7 @@ fun MusicShell(
     onPlayAllFavorites: () -> Unit,
     onLoadAlbum: (AlbumId) -> Unit,
     onLoadArtist: (ArtistId) -> Unit,
+    onPlayAllArtistTracks: (ArtistId) -> Unit,
     onLoadPlaylist: (PlaylistId) -> Unit,
     onCreatePlaylist: suspend (String, String?, String?, TrackId?) -> Boolean,
     onUpdatePlaylist: (PlaylistId, String, String?) -> Unit,
@@ -861,10 +873,15 @@ fun MusicShell(
                                                                 onBack = { popPage() },
                                                             ) }
                                                         }
-                                                        else -> LibraryDetailScreen(
+                                                        else -> ArtistDetailScreen(
                                                             detail = selected,
                                                             state = detailState,
                                                             coverUrl = coverUrl,
+                                                            pagedTracks = pagedArtistTracks,
+                                                            pagedAlbums = pagedArtistAlbums,
+                                                            onLoadArtist = onLoadArtist,
+                                                            onPlayAllArtistTracks = onPlayAllArtistTracks,
+                                                            onAlbum = { pushDetail(LibraryDetail.AlbumPage(it)) },
                                                             onPlay = onPlay,
                                                             onToggleFavorite = onToggleFavorite,
                                                             onBack = { popPage() },
@@ -1607,9 +1624,10 @@ private fun FavoriteTrackRow(
     onPlay: () -> Unit,
     onToggleFavorite: (Track) -> Unit,
     sourcePlaylist: PlaylistId? = null,
+    horizontalPadding: Dp = 16.dp,
 ) {
     val favorite = state.favoriteOverrides[track.id] ?: track.isFavorite
-    TrackRow(track, coverUrl(track.coverId, 120), onPlay) {
+    TrackRow(track, coverUrl(track.coverId, 120), onPlay, horizontalPadding = horizontalPadding) {
         Row {
             IconButton(onClick = { onToggleFavorite(track.copy(isFavorite = favorite)) }) {
                 Icon(if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "收藏", tint = if (favorite) FnAccentIcon else FnTextSecondary)
@@ -2399,47 +2417,149 @@ private fun formatBytes(value: Long): String = when {
     else -> "$value B"
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LibraryDetailScreen(
+private fun ArtistDetailScreen(
     detail: LibraryDetail,
     state: MusicUiState,
     coverUrl: (String?, Int) -> String?,
+    pagedTracks: (ArtistId) -> Flow<PagingData<Track>>,
+    pagedAlbums: (ArtistId) -> Flow<PagingData<Album>>,
+    onLoadArtist: (ArtistId) -> Unit,
+    onPlayAllArtistTracks: (ArtistId) -> Unit,
+    onAlbum: (Album) -> Unit,
     onPlay: (List<Track>, Int) -> Unit,
     onToggleFavorite: (Track) -> Unit,
     onBack: () -> Unit,
-    listState: LazyListState = rememberLazyListState(),
 ) {
     val page = detail as? LibraryDetail.ArtistPage ?: return
     val artist = state.detailArtist?.takeIf { it.id == page.artist.id } ?: page.artist
-    CollectionPage(artist.name, onBack, { listState.firstVisibleItemIndex > 0 }) { heading, top ->
-        if (state.detailLoading) EmptyPane("正在加载详情…")
-        else BoxWithConstraints(Modifier.fillMaxSize()) {
-            val compact = maxWidth < 600.dp
-            LazyColumn(Modifier.fillMaxSize().testTag("library-detail-list"), state = listState,
-                contentPadding = edgeToEdgeContentPadding(top = top, bottom = 36.dp, includeTopInset = false)) {
-                item {
-                    val metadata = "${artist.albumCount} 张专辑 · ${artist.trackCount} 首歌曲"
-                    if (compact) {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            CoverImage(coverUrl(artist.coverId, 640), artist.name, Modifier.size(232.dp))
-                            DetailHeading(artist.name, "歌手", metadata, state.detailTracks, onPlay, heading)
-                        }
+    val artistId = page.artist.id
+    var selectedTab by rememberSaveable(artistId.value) { mutableIntStateOf(0) }
+    var albumsRequested by rememberSaveable(artistId.value) { mutableStateOf(selectedTab == 1) }
+    val headerScroll = rememberSaveable(artistId.value, saver = ArtistHeaderScrollState.Saver) { ArtistHeaderScrollState() }
+    val trackGridState = rememberLazyGridState()
+    val albumGridState = rememberLazyGridState()
+    val pagingScope = rememberCoroutineScope()
+    val trackFlow = remember(artistId) { pagedTracks(artistId).cachedIn(pagingScope) }
+    val albumFlow = remember(artistId) { pagedAlbums(artistId).cachedIn(pagingScope) }
+    val tracks = trackFlow.collectAsLazyPagingItems()
+    val albums = if (albumsRequested) albumFlow.collectAsLazyPagingItems() else null
+    val detailsReady = state.detailArtist?.id == artistId && !state.detailLoading && state.detailError == null
+    val trackCount = artistVisibleCount(artist.trackCount, detailsReady, tracks.itemCount,
+        tracks.loadState.refresh is LoadState.NotLoading && tracks.loadState.append.endOfPaginationReached && tracks.itemCount == 0)
+    val albumCount = artistVisibleCount(artist.albumCount, detailsReady, albums?.itemCount ?: 0,
+        albums != null && albums.loadState.refresh is LoadState.NotLoading && albums.loadState.append.endOfPaginationReached && albums.itemCount == 0)
+    val activeGridState = if (selectedTab == 0) trackGridState else albumGridState
+    CollectionPage(artist.name, onBack, { headerScroll.fraction >= .999f }) { heading, top ->
+        ArtistDetailLayout(
+            scrollState = headerScroll,
+            pinnedTop = top,
+            scrollListBy = { activeGridState.dispatchRawDelta(it) },
+            header = { ArtistDetailHeader(artist, coverUrl, heading, trackCount, albumCount,
+                state.detailError, { onLoadArtist(artistId) }) },
+            controls = { backdrop ->
+                ArtistDetailControls(
+                    selected = selectedTab,
+                    onSelect = { if (it == 1) albumsRequested = true; selectedTab = it },
+                    backdrop = backdrop,
+                    playEnabled = artist.trackCount > 0 || tracks.itemCount > 0,
+                    onPlayAll = { onPlayAllArtistTracks(artistId) },
+                )
+            },
+        ) {
+            AnimatedContent(
+                targetState = selectedTab to (if (selectedTab == 0)
+                    tracks.itemCount == 0 && tracks.loadState.refresh is LoadState.Loading
+                    else albums == null || albums.itemCount == 0 && albums.loadState.refresh is LoadState.Loading),
+                modifier = Modifier.fillMaxSize(),
+                label = "artist-list-content",
+                transitionSpec = {
+                    if (targetState.first == initialState.first) {
+                        fadeIn(tween(180)) togetherWith fadeOut(tween(120))
                     } else {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 24.dp),
-                            horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
-                            CoverImage(coverUrl(artist.coverId, 640), artist.name, Modifier.size(264.dp))
-                            Box(Modifier.weight(1f)) { DetailHeading(artist.name, "歌手", metadata, state.detailTracks, onPlay, heading) }
+                        val direction = if (targetState.first > initialState.first) 1 else -1
+                        (fadeIn(tween(220)) + slideInHorizontally(tween(220)) { direction * it / 12 }) togetherWith
+                            (fadeOut(tween(160)) + slideOutHorizontally(tween(220)) { -direction * it / 12 })
+                    }
+                },
+            ) { (tab, waitingForItems) ->
+                val gridState = if (tab == 0) trackGridState else albumGridState
+                // Loading uses a disposable scroll state so placeholders cannot clamp a restored list position.
+                val loadingGridState = rememberLazyGridState()
+                LazyVerticalGrid(
+                    state = if (waitingForItems) loadingGridState else gridState,
+                    modifier = Modifier.fillMaxSize().testTag(if (tab == 0) "artist-tracks-list" else "artist-albums-grid"),
+                    columns = GridCells.Adaptive(142.dp),
+                    contentPadding = edgeToEdgeContentPadding(horizontal = 20.dp, top = top + ArtistListTopPadding, bottom = 36.dp, includeTopInset = false),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    item(key = "artist-section-count", span = { GridItemSpan(maxLineSpan) }) {
+                        val count = if (tab == 0) trackCount else albumCount
+                        Box(Modifier.padding(horizontal = 4.dp, vertical = 12.dp).height(24.dp)) {
+                            if (count == null) ArtistSkeleton(Modifier.width(72.dp).height(20.dp))
+                            else Text(if (tab == 0) "共 $count 首" else "共 $count 张", color = FnTextSecondary)
                         }
                     }
-                }
-                item { Text("曲目", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp)) }
-                when {
-                    state.detailError != null -> item { EmptyPane(state.detailError) }
-                    state.detailTracks.isEmpty() -> item { EmptyPane("暂无曲目") }
-                    else -> items(state.detailTracks, key = { it.id.value }) { track ->
-                        FavoriteTrackRow(track, state, coverUrl, { onPlay(state.detailTracks, state.detailTracks.indexOf(track)) }, onToggleFavorite)
+                    if (waitingForItems) {
+                        items(if (tab == 0) 5 else 4, key = { "artist-skeleton-$it" },
+                            span = { GridItemSpan(if (tab == 0) maxLineSpan else 1) }) {
+                            ArtistListSkeleton(album = tab == 1)
+                        }
+                    }
+                    if (!waitingForItems && tab == 0) {
+                        items(count = tracks.itemCount, key = tracks.itemKey { "artist-track:${it.id.value}" },
+                            span = { GridItemSpan(maxLineSpan) }) { index ->
+                            tracks[index]?.let { track ->
+                                Box(Modifier.fillMaxWidth()) {
+                                    FavoriteTrackRow(track, state, coverUrl, {
+                                        val loaded = tracks.itemSnapshotList.items
+                                        loaded.indexOfFirst { it.id == track.id }.takeIf { it >= 0 }?.let { onPlay(loaded, it) }
+                                    }, onToggleFavorite, horizontalPadding = 4.dp)
+                                }
+                            }
+                        }
+                        if (tracks.loadState.refresh is LoadState.Error && tracks.itemCount > 0) item(key = "artist-track-refresh-error", span = { GridItemSpan(maxLineSpan) }) {
+                            PagingErrorPane("刷新歌曲失败") { tracks.retry() }
+                        }
+                        when (val append = tracks.loadState.append) {
+                            is LoadState.Loading -> item(key = "artist-track-append-loading", span = { GridItemSpan(maxLineSpan) }) { ArtistPageLoading() }
+                            is LoadState.Error -> item(key = "artist-track-append-error", span = { GridItemSpan(maxLineSpan) }) {
+                                PagingErrorPane("加载更多歌曲失败：${append.error.message ?: "未知错误"}") { tracks.retry() }
+                            }
+                            else -> Unit
+                        }
+                        when (val refresh = tracks.loadState.refresh) {
+                            is LoadState.Loading -> Unit
+                            is LoadState.Error -> if (tracks.itemCount == 0) item(key = "artist-track-error", span = { GridItemSpan(maxLineSpan) }) {
+                                PagingErrorPane(refresh.error.message ?: "加载歌曲失败") { tracks.retry() }
+                            }
+                            else -> if (tracks.itemCount == 0) item(key = "artist-track-empty", span = { GridItemSpan(maxLineSpan) }) { EmptyPane("暂无曲目") }
+                        }
+                    } else if (!waitingForItems && tab == 1 && albums != null) {
+                        items(count = albums.itemCount, key = albums.itemKey { "artist-album:${it.id.value}" }) { index ->
+                            albums[index]?.let { album ->
+                                AlbumCard(album.copy(artists = album.artists.ifEmpty { listOf(artist) }), coverUrl,
+                                    { onAlbum(album) }, Modifier.fillMaxWidth().padding(bottom = 20.dp))
+                            }
+                        }
+                        if (albums.loadState.refresh is LoadState.Error && albums.itemCount > 0) item(key = "artist-album-refresh-error", span = { GridItemSpan(maxLineSpan) }) {
+                            PagingErrorPane("刷新专辑失败") { albums.retry() }
+                        }
+                        when (val append = albums.loadState.append) {
+                            is LoadState.Loading -> item(key = "artist-album-append-loading", span = { GridItemSpan(maxLineSpan) }) { ArtistPageLoading() }
+                            is LoadState.Error -> item(key = "artist-album-append-error", span = { GridItemSpan(maxLineSpan) }) {
+                                PagingErrorPane("加载更多专辑失败：${append.error.message ?: "未知错误"}") { albums.retry() }
+                            }
+                            else -> Unit
+                        }
+                        when (val refresh = albums.loadState.refresh) {
+                            is LoadState.Loading -> Unit
+                            is LoadState.Error -> if (albums.itemCount == 0) item(key = "artist-album-error", span = { GridItemSpan(maxLineSpan) }) {
+                                PagingErrorPane(refresh.error.message ?: "加载专辑失败") { albums.retry() }
+                            }
+                            else -> if (albums.itemCount == 0) item(key = "artist-album-empty", span = { GridItemSpan(maxLineSpan) }) { EmptyPane("暂无专辑") }
+                        }
                     }
                 }
             }
@@ -2448,20 +2568,94 @@ private fun LibraryDetailScreen(
 }
 
 @Composable
-private fun DetailHeading(
-    title: String,
-    subtitle: String,
-    metadata: String,
-    tracks: List<Track>,
-    onPlay: (List<Track>, Int) -> Unit,
-    headingModifier: Modifier = Modifier,
+private fun ArtistDetailHeader(
+    artist: Artist,
+    coverUrl: (String?, Int) -> String?,
+    headingModifier: Modifier,
+    trackCount: Int?,
+    albumCount: Int?,
+    detailError: String?,
+    onRetry: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(title, modifier = headingModifier, fontSize = 34.sp, lineHeight = 42.sp, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
-        Text(subtitle, style = MaterialTheme.typography.titleMedium, color = FnTextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text(metadata, color = FnTextSecondary)
-        Spacer(Modifier.height(6.dp))
-        CollectionPlayButton(tracks.isNotEmpty()) { onPlay(tracks, 0) }
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        CoverImage(coverUrl(artist.coverId, 960), artist.name,
+            Modifier.widthIn(max = 520.dp).fillMaxWidth().aspectRatio(1f).testTag("artist-hero-cover"))
+        Spacer(Modifier.height(20.dp))
+        Text(artist.name, modifier = headingModifier, fontSize = 34.sp, lineHeight = 42.sp,
+            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+            maxLines = 3, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.height(8.dp))
+        if (trackCount != null && albumCount != null) {
+            Text("$trackCount 首歌曲 · $albumCount 张专辑", Modifier.height(24.dp), color = FnTextSecondary)
+        } else Row(Modifier.height(24.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (trackCount == null) ArtistSkeleton(Modifier.width(72.dp).height(18.dp))
+            else Text("$trackCount 首歌曲", color = FnTextSecondary)
+            Text(" · ", color = FnTextSecondary)
+            if (albumCount == null) ArtistSkeleton(Modifier.width(72.dp).height(18.dp))
+            else Text("$albumCount 张专辑", color = FnTextSecondary)
+        }
+        if (detailError != null) TextButton(onClick = onRetry, colors = readableTextButtonColors()) {
+            Text("歌手资料加载失败，点击重试", style = MaterialTheme.typography.bodySmall)
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun ArtistDetailControls(
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    backdrop: Backdrop,
+    playEnabled: Boolean,
+    onPlayAll: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier.fillMaxWidth().testTag("artist-detail-controls"),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.weight(0.48f)) { ArtistPlayAllButton(playEnabled, onPlayAll) }
+        ArtistDetailTabs(selected, onSelect, backdrop, Modifier.weight(0.52f))
+    }
+}
+
+@Composable
+private fun ArtistPlayAllButton(enabled: Boolean, onClick: () -> Unit) {
+    FilledTonalButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth().height(48.dp).testTag("collection-play-all"),
+        shape = RoundedCornerShape(50),
+        contentPadding = PaddingValues(horizontal = 8.dp),
+        colors = ButtonDefaults.filledTonalButtonColors(),
+    ) {
+        Icon(Icons.Rounded.PlayArrow, null, Modifier.size(20.dp))
+        Spacer(Modifier.width(6.dp))
+        Text("播放全部", fontWeight = FontWeight.SemiBold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun ArtistDetailTabs(selected: Int, onSelect: (Int) -> Unit, backdrop: Backdrop, modifier: Modifier = Modifier) {
+    LiquidBottomTabs(
+        selectedTabIndex = selected,
+        onTabSelected = onSelect,
+        backdrop = backdrop,
+        tabsCount = 2,
+        modifier = modifier.height(48.dp).testTag("artist-detail-tabs"),
+        height = 48.dp,
+    ) {
+        LiquidBottomTab(onClick = { onSelect(0) }, modifier = Modifier.semantics { this.selected = selected == 0 }.testTag("artist-tab-tracks")) {
+            Text("歌曲", color = FnTextSecondary)
+        }
+        LiquidBottomTab(onClick = { onSelect(1) }, modifier = Modifier.semantics { this.selected = selected == 1 }.testTag("artist-tab-albums")) {
+            Text("专辑", color = FnTextSecondary)
+        }
     }
 }
 

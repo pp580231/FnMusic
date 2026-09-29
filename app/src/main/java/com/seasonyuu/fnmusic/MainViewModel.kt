@@ -122,6 +122,8 @@ class MainViewModel @Inject constructor(private val graph: AppGraph, private val
     private val albumPages = mutableMapOf<AlbumSort, Flow<PagingData<Album>>>()
     fun pagedTracks(sort: TrackSort) = trackPages.getOrPut(sort) { graph.catalog.tracks(sort).cachedIn(viewModelScope) }
     fun pagedAlbums(sort: AlbumSort) = albumPages.getOrPut(sort) { graph.catalog.albums(sort).cachedIn(viewModelScope) }
+    fun pagedArtistTracks(id: ArtistId) = graph.catalog.artistTracks(id)
+    fun pagedArtistAlbums(id: ArtistId) = graph.catalog.artistAlbums(id)
     val pagedArtists = graph.catalog.artists().cachedIn(viewModelScope)
     val pagedFavorites = graph.catalog.favorites().cachedIn(viewModelScope)
     private val searchController = SearchController(viewModelScope, graph.search, mutableMusic)
@@ -370,8 +372,15 @@ class MainViewModel @Inject constructor(private val graph: AppGraph, private val
         copy(detailAlbum = album, detailTracks = graph.catalog.albumTracks(id))
     }
     fun loadArtist(id: ArtistId) = loadDetail(DetailRequestKey("artist", id.value)) {
-        val artist = graph.catalog.artistDetail(id)
-        copy(detailArtist = artist, detailTracks = graph.catalog.artistTracks(id))
+        copy(detailArtist = graph.catalog.artistDetail(id))
+    }
+
+    fun playAllArtistTracks(id: ArtistId) {
+        viewModelScope.launch {
+            runCatching { graph.catalog.allArtistTracks(id) }
+                .onSuccess { if (it.isNotEmpty()) play(it, 0) }
+                .onFailure { mutableMusic.value = mutableMusic.value.copy(error = "加载歌手全部歌曲失败") }
+        }
     }
     fun loadPlaylist(id: PlaylistId) = loadDetail(DetailRequestKey("playlist", id.value)) {
         val metadata = graph.catalog.playlistDetail(id)

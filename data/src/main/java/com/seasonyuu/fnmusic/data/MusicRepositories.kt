@@ -79,7 +79,9 @@ interface CatalogRepository {
     suspend fun albumDetail(id: AlbumId): Album
     suspend fun artistDetail(id: ArtistId): Artist
     suspend fun albumTracks(id: AlbumId, size: Int = 200): List<Track>
-    suspend fun artistTracks(id: ArtistId, size: Int = 200): List<Track>
+    fun artistTracks(id: ArtistId): Flow<PagingData<Track>>
+    fun artistAlbums(id: ArtistId): Flow<PagingData<Album>>
+    suspend fun allArtistTracks(id: ArtistId): List<Track>
     suspend fun playlistTracks(id: PlaylistId, size: Int = 200): List<Track>
     suspend fun updateTrackMetadata(track: Track, edit: TrackMetadataEdit): TrackMetadata
     suspend fun trackTagOptions(): TrackTagOptions
@@ -199,7 +201,22 @@ class MusicCatalogRepository(private val api: MusicApi) : CatalogRepository {
     override suspend fun albumDetail(id: AlbumId) = api.albumDetail(id.value).requireData().toDomain()
     override suspend fun artistDetail(id: ArtistId) = api.artistDetail(id.value).requireData().toDomain()
     override suspend fun albumTracks(id: AlbumId, size: Int) = api.albumTracks(id.value, 1, size).requireData().list.map(TrackDto::toDomain)
-    override suspend fun artistTracks(id: ArtistId, size: Int) = api.artistTracks(id.value, 1, size).requireData().list.map(TrackDto::toDomain)
+    override fun artistTracks(id: ArtistId): Flow<PagingData<Track>> =
+        pager { page, size -> api.artistTracks(id.value, page, size).requireData() }
+            .map { data -> data.map(TrackDto::toDomain) }
+    override fun artistAlbums(id: ArtistId): Flow<PagingData<Album>> =
+        pager { page, size -> api.artistAlbums(id.value, page, size).requireData() }
+            .map { data -> data.map(AlbumDto::toDomain) }
+    override suspend fun allArtistTracks(id: ArtistId): List<Track> {
+        val tracks = mutableListOf<Track>()
+        var page = 1
+        do {
+            val response = api.artistTracks(id.value, page++, 200).requireData()
+            check(response.list.isNotEmpty() || tracks.size >= response.total) { "歌手歌曲加载不完整，请重试" }
+            tracks += response.list.map(TrackDto::toDomain)
+        } while (tracks.size < response.total)
+        return tracks
+    }
     override suspend fun playlistTracks(id: PlaylistId, size: Int): List<Track> {
         require(size > 0)
         val tracks = mutableListOf<Track>()

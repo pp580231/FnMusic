@@ -376,6 +376,13 @@ interface MusicApi {
         @Query("size") size: Int,
     ): ApiEnvelope<PageDto<TrackDto>>
 
+    @GET("api/v1/album/artist-detail/list")
+    suspend fun artistAlbums(
+        @Query("artistGUID") artistGuid: String,
+        @Query("page") page: Int,
+        @Query("size") size: Int,
+    ): ApiEnvelope<PageDto<AlbumDto>>
+
     @GET("api/v1/track/playlist-detail/list")
     suspend fun playlistTracks(
         @Query("playlistGUID") playlistGuid: String,
