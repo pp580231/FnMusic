@@ -34,6 +34,16 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.withId
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 
 class LibraryAdministrationScreenTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
@@ -113,6 +123,63 @@ class LibraryAdministrationScreenTest {
         content(authorizationTarget = FolderAuthorizationTarget("https://nas.example/music/"))
         compose.onNodeWithContentDescription("添加文件夹").performClick()
         compose.onNodeWithText("授权文件夹").assertIsDisplayed()
+    }
+
+    @Test fun nativeAuthorizationBackPreservesPickerAndEditorDraft() {
+        MockWebServer().use { server ->
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest) = MockResponse()
+                    .setHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody("<!doctype html><html><body>fnOS 授权测试页面</body></html>")
+            }
+            server.start()
+            content(authorizationTarget = FolderAuthorizationTarget(server.url("/music/").toString()))
+            compose.onNodeWithContentDescription("添加文件夹").performClick()
+            compose.onAllNodesWithText("音乐位置").onLast().performClick()
+            compose.onNodeWithText("新音乐").performClick()
+            compose.onNodeWithText("选择此文件夹").performClick()
+            compose.onNodeWithText("仅使用本地数据").performClick()
+            compose.onNodeWithText("/vol1/1000/Music/New").performClick()
+            repeat(2) {
+                compose.onNodeWithText("授权文件夹").performClick()
+                onView(withId(R.id.authorization_title)).check(matches(isDisplayed()))
+                onView(withId(R.id.authorization_back)).perform(click())
+                compose.onNodeWithText("选择音乐文件夹").assertIsDisplayed()
+            }
+            compose.onNodeWithContentDescription("返回").performClick()
+            compose.onNodeWithText("/vol1/1000/Music/New").assertIsDisplayed()
+            compose.onNodeWithText("自动下载歌词").assertDoesNotExist()
+            compose.onNodeWithText("添加文件夹").assertIsEnabled()
+            assertEquals(0, api.saves)
+        }
+    }
+
+    @Test fun nativeAuthorizationSuccessRechecksDirectoriesWithoutSavingFolder() {
+        MockWebServer().use { server ->
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val url = requireNotNull(request.requestUrl)
+                    if (url.encodedPath != "/app-auth/pick-shared-file") return MockResponse().setResponseCode(404)
+                    val callback = requireNotNull(url.queryParameter("redirectUri")?.toHttpUrlOrNull()).newBuilder()
+                        .addQueryParameter("method", "music-app-auth-pick-file")
+                        .addQueryParameter("appName", "trim.music")
+                        .addQueryParameter("state", url.queryParameter("state"))
+                        .addQueryParameter("status", "success")
+                        .addQueryParameter("path", "[\"/vol1/1000/Music\"]").build()
+                    return MockResponse().setHeader("Content-Type", "text/html; charset=utf-8")
+                        .setBody("<!doctype html><script>location.replace('$callback')</script>")
+                }
+            }
+            server.start()
+            content(authorizationTarget = FolderAuthorizationTarget(server.url("/music/").toString()))
+            compose.onNodeWithContentDescription("添加文件夹").performClick()
+            compose.waitUntil { api.directoryReads > 0 }
+            val before = api.directoryReads
+            compose.onNodeWithText("授权文件夹").performClick()
+            compose.waitUntil(15_000) { api.directoryReads > before }
+            compose.onNodeWithText("选择音乐文件夹").assertIsDisplayed()
+            assertEquals(0, api.saves)
+        }
     }
     @Test fun editingKeepsDraftAndTasksExposeCancellationAndRetry() {
         content(dark = true, fontScale = 1.4f)
@@ -203,6 +270,7 @@ class LibraryAdministrationScreenTest {
     private class LibraryStub : MusicAdministration {
         @Volatile var saves = 0
         @Volatile var taskReads = 0
+        @Volatile var directoryReads = 0
         var scans = 0
         var cancels = 0
         var retries = 0
@@ -213,7 +281,10 @@ class LibraryAdministrationScreenTest {
         private val folder = MusicFolder("existing", "现有音乐", "/vol1/1000/Music/Existing/很长的音乐文件夹名称/Live Concerts & Jazz/高解析度无损收藏", accessStatus = 0, contentLastChangedAt = 1789996320)
         override suspend fun folders() = listOf(folder, MusicFolder("other", "歌单", "/vol2/1000/歌单", accessStatus = 0, contentLastChangedAt = 1789996440))
         override suspend fun folderDetail(guid: String) = folder
-        override suspend fun authorizedDirectories() = listOf(AuthorizedMusicDirectory("/vol1/1000/Music", 3, name = "音乐位置"))
+        override suspend fun authorizedDirectories(): List<AuthorizedMusicDirectory> {
+            directoryReads++
+            return listOf(AuthorizedMusicDirectory("/vol1/1000/Music", 3, name = "音乐位置"))
+        }
         override suspend fun childDirectories(parent: String) = if (parent == "/vol1/1000/Music") listOf(MusicDirectory("/vol1/1000/Music/New", "新音乐")) else emptyList()
         override suspend fun scanTasks(): List<MusicScanTask> {
             taskReads++

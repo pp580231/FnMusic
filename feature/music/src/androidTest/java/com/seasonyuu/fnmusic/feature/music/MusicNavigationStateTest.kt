@@ -37,32 +37,30 @@ class MusicNavigationStateTest {
         }
     }
 
-    @Test fun folderAuthorizationRouteRestoresItsCallbackStateAndParent() {
-        lateinit var navigation: MusicNavigationState
-        val restoration = StateRestorationTester(compose)
-        restoration.setContent {
-            navigation = rememberSaveable(saver = MusicNavigationState.Saver) { MusicNavigationState() }
+    @Test fun oldEmbeddedAuthorizationRouteRestoresItsLibraryParent() {
+        fun entry(id: String, page: String) = android.os.Bundle().apply {
+            putString("id", id); putString("page", page); putString("type", "root")
         }
-        val request = FolderAuthorizationRequest.create(
-            FolderAuthorizationTarget("https://relay.fnos.net/music/", relayMode = true),
-            listOf("/vol1/1000/Existing"), "test-state")
-        compose.runOnIdle {
-            navigation.select(MusicDestination.Profile)
-            navigation.push(page = MusicPage.AdminLibraries)
-            navigation.push(page = MusicPage.FolderAuthorization, folderAuthorization = request)
+        val saved = android.os.Bundle().apply {
+            putInt("version", 2)
+            putString("destination", "Profile")
+            MusicDestination.entries.forEach { tab ->
+                val entries = arrayListOf(entry(tab.name, "Root"))
+                if (tab == MusicDestination.Profile) {
+                    entries += entry("library-editor", "AdminLibraries")
+                    entries += entry("old-webview", "FolderAuthorization")
+                }
+                putParcelableArrayList(tab.name, entries)
+            }
         }
-        restoration.emulateSavedInstanceStateRestore()
-        compose.runOnIdle {
-            assertEquals(MusicPage.FolderAuthorization, navigation.current.page)
-            val restored = requireNotNull(navigation.current.folderAuthorization)
-            assertEquals(request.url, restored.url)
-            assertEquals(request.origin, restored.origin)
-            assertEquals(request.callbackPath, restored.callbackPath)
-            assertEquals(request.state, restored.state)
-            assertTrue(restored.relayMode)
-            navigation.pop()
-            assertEquals(MusicPage.AdminLibraries, navigation.current.page)
-        }
+        val navigation = MusicNavigationState.restoreNavigation(saved)
+        assertEquals(MusicDestination.Profile, navigation.destination)
+        assertEquals(MusicPage.AdminLibraries, navigation.current.page)
+        assertEquals("library-editor", navigation.current.id)
+        assertEquals(1, navigation.current.depth)
+        assertFalse("old-webview" in navigation.entryIds)
+        navigation.pop()
+        assertEquals(MusicPage.Root, navigation.current.page)
     }
 
     @Test fun liquidGlassRestoresAndReturnsToSettings() {
