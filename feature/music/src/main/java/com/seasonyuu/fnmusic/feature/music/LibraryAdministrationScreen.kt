@@ -1,6 +1,7 @@
 package com.seasonyuu.fnmusic.feature.music
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.tween
@@ -34,6 +35,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.Alignment
 import com.seasonyuu.fnmusic.core.designsystem.LiquidToggle
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,6 +43,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.seasonyuu.fnmusic.core.designsystem.LiquidMenuItem
+import com.seasonyuu.fnmusic.core.designsystem.FnAccent
+import com.seasonyuu.fnmusic.core.designsystem.FnSurface
+import com.seasonyuu.fnmusic.core.designsystem.FnTextPrimary
 import com.seasonyuu.fnmusic.core.model.*
 import kotlinx.coroutines.delay
 
@@ -48,9 +53,6 @@ import kotlinx.coroutines.delay
 @Composable
 internal fun LibraryAdministrationScreen(api: MusicAdministration, onBack: () -> Unit,
     authorizationTarget: FolderAuthorizationTarget? = null,
-    onAuthorize: (FolderAuthorizationRequest) -> Unit = {},
-    authorizationResult: FolderAuthorizationResult? = null,
-    onAuthorizationResultConsumed: () -> Unit = {},
     isActive: Boolean = true,
     onCatalogChanged: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
@@ -65,16 +67,18 @@ internal fun LibraryAdministrationScreen(api: MusicAdministration, onBack: () ->
     var rebuild by remember { mutableStateOf(false) }
     var discard by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(authorizationResult) {
-        authorizationResult?.let { result ->
-            when (result) {
-                is FolderAuthorizationResult.Success -> state.authorizationSucceeded(result.paths)
-                FolderAuthorizationResult.Cancel -> state.message = "已取消文件夹授权"
-                FolderAuthorizationResult.Error -> state.message = "文件夹授权失败，请重试"
-                FolderAuthorizationResult.Invalid -> state.message = "授权返回信息无效，请重新检查"
-                FolderAuthorizationResult.Closed -> state.message = "已关闭文件夹授权"
-            }
-            onAuthorizationResultConsumed()
+    var authorizationInFlight by rememberSaveable { mutableStateOf(false) }
+    val authorizationBackground = FnSurface.toArgb()
+    val authorizationForeground = FnTextPrimary.toArgb()
+    val authorizationAccent = FnAccent.toArgb()
+    val authorizationLauncher = rememberLauncherForActivityResult(FolderAuthorizationContract()) { result ->
+        authorizationInFlight = false
+        when (result) {
+            is FolderAuthorizationResult.Success -> state.authorizationSucceeded(result.paths)
+            FolderAuthorizationResult.Cancel -> state.message = "已取消文件夹授权"
+            FolderAuthorizationResult.Error -> state.message = "文件夹授权失败，请重试"
+            FolderAuthorizationResult.Invalid -> state.message = "授权返回信息无效，请重新检查"
+            FolderAuthorizationResult.Closed -> state.message = "已关闭文件夹授权"
         }
     }
     LaunchedEffect(state, owner) {
@@ -88,9 +92,17 @@ internal fun LibraryAdministrationScreen(api: MusicAdministration, onBack: () ->
     BackHandler(isActive && state.pickerOpen) { if (state.directory != null) state.directoryUp() else state.pickerOpen = false }
     val authorize: (() -> Unit)? = authorizationTarget?.let { target ->
         {
-            runCatching { FolderAuthorizationRequest.create(target, state.roots.orEmpty().map { it.path }) }
-                .onSuccess(onAuthorize).onFailure { state.message = "无法打开文件夹授权，请检查连接" }
-            Unit
+            if (!authorizationInFlight) {
+                runCatching {
+                    val request = FolderAuthorizationRequest.create(target, state.roots.orEmpty().map { it.path })
+                    authorizationInFlight = true
+                    authorizationLauncher.launch(FolderAuthorizationLaunch(request,
+                        authorizationBackground, authorizationForeground, authorizationAccent))
+                }.onFailure {
+                    authorizationInFlight = false
+                    state.message = "无法打开文件夹授权，请检查连接"
+                }
+            }
         }
     }
     BackHandler(isActive && !state.pickerOpen && (state.draft != null || state.editingGuid != null)) { closeEditor() }

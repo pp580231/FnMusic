@@ -15,7 +15,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.UUID
 
-internal enum class MusicPage { Root, Tracks, Recent, Albums, Artists, Playlists, Favorites, LiquidGlass, Password, Appearance, DisplayMode, ThemeColor, Cache, LyricsSettings, OnlineLyricsSettings, Quality, AdminLibraries, FolderAuthorization, AdminUsers, AdminServer, About, OpenSourceLibraries, OpenSourceDetail }
+internal enum class MusicPage { Root, Tracks, Recent, Albums, Artists, Playlists, Favorites, LiquidGlass, Password, Appearance, DisplayMode, ThemeColor, Cache, LyricsSettings, OnlineLyricsSettings, Quality, AdminLibraries, AdminUsers, AdminServer, About, OpenSourceLibraries, OpenSourceDetail }
 
 /** Resource identity travels with data so an outgoing page cannot render another page's response. */
 data class DetailRequestKey(val type: String, val id: String)
@@ -44,7 +44,6 @@ internal data class MusicPageEntry(
     val id: String = UUID.randomUUID().toString(),
     val depth: Int = 0,
     val libraryId: String? = null,
-    val folderAuthorization: FolderAuthorizationRequest? = null,
 )
 
 internal class MusicNavigationState {
@@ -72,10 +71,9 @@ internal class MusicNavigationState {
     val previous: MusicPageEntry? get() = stacks.getValue(destination).dropLast(1).lastOrNull()
 
     fun select(target: MusicDestination) { destination = target }
-    fun push(detail: LibraryDetail? = null, page: MusicPage = MusicPage.Root, libraryId: String? = null,
-        folderAuthorization: FolderAuthorizationRequest? = null) {
+    fun push(detail: LibraryDetail? = null, page: MusicPage = MusicPage.Root, libraryId: String? = null) {
         stacks = stacks + (destination to (stacks.getValue(destination) + MusicPageEntry(destination, page, detail,
-            depth = stacks.getValue(destination).size, libraryId = libraryId, folderAuthorization = folderAuthorization)))
+            depth = stacks.getValue(destination).size, libraryId = libraryId)))
     }
     fun pop(): MusicPageEntry? {
         if (!canPop) return null
@@ -107,9 +105,14 @@ internal class MusicNavigationState {
                 destination = MusicDestination.valueOf(requireNotNull(bundle.getString("destination")))
                 stacks = MusicDestination.entries.associateWith { tab ->
                     @Suppress("DEPRECATION")
-                    requireNotNull(bundle.getParcelableArrayList<Bundle>(tab.name)).mapIndexed { depth, saved -> saved.toEntry(tab).copy(depth = depth) }.flatMapIndexed { index, entry ->
+                    requireNotNull(bundle.getParcelableArrayList<Bundle>(tab.name)).mapIndexedNotNull { depth, saved ->
+                        // Older versions embedded authorization in this stack. Restore its parent;
+                        // the new native Activity owns authorization state outside Compose.
+                        if (saved.getString("page") == "FolderAuthorization") null
+                        else saved.toEntry(tab).copy(depth = depth)
+                    }.flatMapIndexed { index, entry ->
                         if (entry.page == MusicPage.LiquidGlass && index > 0 &&
-                            savedPagesNeedAppearance(bundle, tab, index)) {
+                            savedPagesNeedAppearance(bundle, tab, entry.depth)) {
                             listOf(MusicPageEntry(tab, MusicPage.Appearance), entry)
                         } else listOf(entry)
                     }.filterNot { it.page == MusicPage.ThemeColor || it.page == MusicPage.DisplayMode }.mapIndexed { depth, entry -> entry.copy(depth = depth) }.also { entries ->
@@ -125,13 +128,6 @@ private fun MusicPageEntry.toBundle() = Bundle().apply {
     putString("id", id)
     putString("page", page.name)
     putString("libraryId", libraryId)
-    folderAuthorization?.let { request ->
-        putString("authorizationUrl", request.url)
-        putString("authorizationOrigin", request.origin)
-        putString("authorizationCallbackPath", request.callbackPath)
-        putString("authorizationState", request.state)
-        putBoolean("authorizationRelay", request.relayMode)
-    }
     val type: String
     val payload: String?
     when (val page = detail) {
@@ -152,11 +148,6 @@ private fun MusicPageEntry.toBundle() = Bundle().apply {
 private fun Bundle.toEntry(tab: MusicDestination): MusicPageEntry {
     val payload = getString("payload")
     val page = MusicPage.valueOf(requireNotNull(getString("page")))
-    val folderAuthorization = if (page == MusicPage.FolderAuthorization) FolderAuthorizationRequest.restore(
-        requireNotNull(getString("authorizationUrl")), requireNotNull(getString("authorizationOrigin")),
-        requireNotNull(getString("authorizationCallbackPath")), requireNotNull(getString("authorizationState")),
-        getBoolean("authorizationRelay"),
-    ) else null
     val detail = when (getString("type")) {
         "album" -> LibraryDetail.AlbumPage(Json.decodeFromString(requireNotNull(payload)))
         "artist" -> LibraryDetail.ArtistPage(Json.decodeFromString(requireNotNull(payload)))
@@ -165,7 +156,7 @@ private fun Bundle.toEntry(tab: MusicDestination): MusicPageEntry {
         "editor" -> LibraryDetail.PlaylistEditorPage(payload?.let { Json.decodeFromString<Playlist>(it) }, getString("initialTrack")?.let(::TrackId))
         else -> null
     }
-    return MusicPageEntry(tab, page, detail, requireNotNull(getString("id")), libraryId = getString("libraryId"), folderAuthorization = folderAuthorization)
+    return MusicPageEntry(tab, page, detail, requireNotNull(getString("id")), libraryId = getString("libraryId"))
 }
 
 @Suppress("DEPRECATION")

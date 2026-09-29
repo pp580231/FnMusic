@@ -26,7 +26,10 @@ If a user-level Gradle proxy is unavailable, disable it for this invocation:
 
 ## Modules
 
-FnMusic uses a single Android activity with Jetpack Compose. The main boundaries are:
+FnMusic uses a Jetpack Compose main activity. Folder authorization runs in a separate,
+non-exported native Activity with a View-based toolbar and WebView; a typed Activity
+Result contract carries the request and result without embedding the WebView in
+Compose navigation or backdrop layers. The main boundaries are:
 
 | Module | Responsibility |
 | --- | --- |

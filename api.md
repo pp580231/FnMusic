@@ -698,7 +698,7 @@ UNRESOLVED
 
 ### 11.5 fnOS 文件夹授权跳转（当前 Web 行为）
 
-新版音乐 Web 的“授权文件夹”从当前音乐服务地址的**同源根路径**打开 `GET /app-auth/pick-shared-file`。查询参数包括 `appName=trim.music`、同源绝对回调地址 `{origin}/music/app-auth-pick-file`（参数名 `redirectUri`）、每次启动随机的 `state`、`sidebarGroup=myFiles,team,external,remote,storage`，以及用逗号连接现有授权目录的 `disabledPaths`。这是 fnOS 页面，不是音乐 API。Web 使用独立窗口；Android 在普通导航页面中用应用内 WebView 承接相同流程，返回后恢复添加文件夹草稿。
+新版音乐 Web 的“授权文件夹”从当前音乐服务地址的**同源根路径**打开 `GET /app-auth/pick-shared-file`。查询参数包括 `appName=trim.music`、同源绝对回调地址 `{origin}/music/app-auth-pick-file`（参数名 `redirectUri`）、每次启动随机的 `state`、`sidebarGroup=myFiles,team,external,remote,storage`，以及用逗号连接现有授权目录的 `disabledPaths`。这是 fnOS 页面，不是音乐 API。Web 使用独立窗口；Android 使用独立、不对外导出的原生 Activity，以原生工具栏和 WebView 承接相同流程。Compose 通过 Activity Result 传入请求并接收成功、取消、错误或关闭结果，WebView 不参与 Compose 导航动画和背景录制；返回后保留添加文件夹草稿。Activity 自行管理 WebView 的暂停、恢复、状态保存和销毁，标题栏返回及系统返回均关闭授权页面。
 
 Android 仅在 `/api/v1/sys/config` 的 `serverVersion` **大于等于 1.0.10** 时显示“授权文件夹”；缺失或无法解析的版本也不显示。`mediasrvVersion` 仅用于展示，不参与入口判断。旧版本仍可浏览已授权目录，并可在 NAS 系统设置中授权后点击“重新检查”。
 
