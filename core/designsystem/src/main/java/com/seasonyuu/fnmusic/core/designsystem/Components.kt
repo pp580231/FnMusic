@@ -209,15 +209,16 @@ fun TrackRow(
     track: Track,
     coverUrl: String?,
     onClick: () -> Unit,
+    horizontalPadding: androidx.compose.ui.unit.Dp = 16.dp,
     trailing: @Composable (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp)
+            .padding(horizontal = horizontalPadding / 2)
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = horizontalPadding / 2, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {

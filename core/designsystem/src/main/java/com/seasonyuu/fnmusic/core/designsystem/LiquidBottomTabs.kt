@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
@@ -56,9 +57,12 @@ fun LiquidBottomTabs(
     modifier: Modifier = Modifier,
     showSelectionIndicator: Boolean = true,
     surfaceColor: Color = FnNavigationSurface,
+    height: Dp = 64.dp,
     content: @Composable RowScope.() -> Unit,
 ) {
     if (tabsCount == 0) return
+    require(height > 8.dp)
+    val indicatorHeight = height - 8.dp
     val accent = FnAccent
     val selectionColor = FnTextPrimary
     val glass = currentLiquidGlassMaterial()
@@ -114,7 +118,7 @@ fun LiquidBottomTabs(
                     scaleX = scale
                     scaleY = scale
                 }.background(surfaceColor.copy(alpha = glass.surfaceAlpha), Capsule()).liquidSurfaceHighlight()
-                    .border(1.dp, FnBorder.copy(alpha = FnBorder.alpha * .5f), Capsule()).height(64.dp).fillMaxWidth())
+                    .border(1.dp, FnBorder.copy(alpha = FnBorder.alpha * .5f), Capsule()).height(height).fillMaxWidth())
             }
             Row(
                 Modifier
@@ -144,7 +148,7 @@ fun LiquidBottomTabs(
                             }
                         },
                     )
-                    .height(64.dp)
+                    .height(height)
                     .fillMaxWidth()
                     .padding(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -175,7 +179,7 @@ fun LiquidBottomTabs(
                                 drawRect(surfaceColor.copy(alpha = glass.surfaceAlpha))
                             },
                         )
-                        .height(56.dp)
+                        .height(indicatorHeight)
                         .fillMaxWidth()
                         .padding(horizontal = 4.dp)
                         .graphicsLayer(colorFilter = ColorFilter.tint(accent)),
@@ -238,7 +242,7 @@ fun LiquidBottomTabs(
                         }
                     },
                 )
-                .height(56.dp).fillMaxWidth(1f / tabsCount)
+                .height(indicatorHeight).fillMaxWidth(1f / tabsCount)
                 .then(if (useBackdrop) Modifier.testTag("liquid-bottom-tabs-indicator") else Modifier)
             )
             if (showSelectionIndicator && !useBackdrop) {
@@ -253,7 +257,7 @@ fun LiquidBottomTabs(
                             val velocity = dragAnimation.velocity / 10f
                             val halfWidth = tabWidthPx * dragAnimation.scaleX /
                                 (1f - (velocity * .75f).coerceIn(-.2f, .2f)) / 2f
-                            val halfHeight = 56.dp.toPx() * dragAnimation.scaleY *
+                            val halfHeight = indicatorHeight.toPx() * dragAnimation.scaleY *
                                 (1f - (velocity * .25f).coerceIn(-.2f, .2f)) / 2f
                             val mask = Path().apply {
                                 addRoundRect(RoundRect(center - halfWidth, size.height / 2f - halfHeight,
@@ -268,7 +272,7 @@ fun LiquidBottomTabs(
                             scaleX = scale
                             scaleY = scale
                         }
-                        .height(64.dp).fillMaxWidth().padding(4.dp)
+                        .height(height).fillMaxWidth().padding(4.dp)
                         .graphicsLayer(colorFilter = ColorFilter.tint(accent)),
                     verticalAlignment = Alignment.CenterVertically,
                     content = content,
@@ -279,7 +283,7 @@ fun LiquidBottomTabs(
                 Box(Modifier.padding(horizontal = 4.dp)
                     .graphicsLayer { translationX = dragAnimation.value * tabWidthPx + panelPx }
                     .then(dragAnimation.modifier)
-                    .height(56.dp).fillMaxWidth(1f / tabsCount)
+                    .height(indicatorHeight).fillMaxWidth(1f / tabsCount)
                     .testTag("liquid-bottom-tabs-indicator"))
             }
         }
