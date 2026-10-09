@@ -1,0 +1,38 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # 允许在网页上手动点击运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # 编译 Debug 包
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
+
+      # 上传编译好的 APK
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FnMusic-debug-apk
+          # 注意：你的 APK 会在 app 模块的 build 目录下生成
+          path: app/build/outputs/apk/debug/*.apk
